@@ -139,8 +139,10 @@ export function ensureSchema() {
     schemaPromise = (async () => {
       assertReady();
       if (USE_PG) {
-        // Postgres não aceita múltiplos statements com parâmetros, mas aceita sem.
-        await pgPool.query(SCHEMA_PG);
+        // Roda cada statement separadamente: compatível com o Transaction pooler
+        // do Supabase (pgBouncer), que pode falhar com múltiplos statements juntos.
+        const stmts = SCHEMA_PG.split(';').map((s) => s.trim()).filter(Boolean);
+        for (const stmt of stmts) await pgPool.query(stmt);
       } else {
         sqlite.exec(SCHEMA_SQLITE);
       }
