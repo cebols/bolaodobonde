@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  all, get, run, ensureSchema,
+  all, get, run, ensureSchema, USE_PG,
   createPool, genToken, hashPin,
   recomputeMatch, recomputeQualifiers, computeGroupTop2,
 } from './store.js';
@@ -13,13 +13,39 @@ const app = express();
 app.use(express.json());
 
 // Garante o schema (cria as tabelas no 1º acesso — importante no serverless).
+// Não bloqueia a requisição: se falhar, guarda o erro para o /api/_health relatar
+// e deixa o handler seguir (a query real vai expor o erro de verdade).
 app.use(async (req, res, next) => {
-  try { await ensureSchema(); next(); } catch (e) { next(e); }
+  try { await ensureSchema(); } catch (e) { req._dbError = e; }
+  next();
 });
 
+// Mostra o detalhe do erro quando DEBUG_ERRORS=1 (útil para diagnosticar em produção).
+const SHOW_ERR = process.env.DEBUG_ERRORS === '1' || process.env.DEBUG_ERRORS === 'true';
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((err) => {
   console.error(err);
-  res.status(500).json({ error: 'Erro interno do servidor.' });
+  const body = { error: 'Erro interno do servidor.' };
+  if (SHOW_ERR) { body.detail = String(err && err.message || err); body.code = err && err.code; }
+  res.status(500).json(body);
+});
+
+// Diagnóstico: modo do banco e teste de conexão (não vaza a connection string).
+app.get('/api/_health', (req, res) => {
+  const info = {
+    ok: true,
+    db: USE_PG ? 'postgres' : 'sqlite',
+    hasDatabaseUrl: !!process.env.DATABASE_URL,
+    node: process.version,
+  };
+  Promise.resolve()
+    .then(() => ensureSchema())
+    .then(() => get('SELECT 1 AS ok'))
+    .then((r) => { info.connect = 'ok'; info.select = r; res.json(info); })
+    .catch((e) => {
+      info.ok = false; info.connect = 'fail';
+      info.error = String(e && e.message || e); info.code = e && e.code;
+      res.status(500).json(info);
+    });
 });
 
 async function getPool(req, res) {

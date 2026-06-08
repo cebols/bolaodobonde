@@ -123,7 +123,11 @@ export function ensureSchema() {
       } else {
         sqlite.exec(SCHEMA_SQLITE);
       }
-    })();
+    })().catch((e) => {
+      // Não envenena o cache: permite nova tentativa no próximo acesso.
+      schemaPromise = null;
+      throw e;
+    });
   }
   return schemaPromise;
 }
