@@ -1,0 +1,18 @@
+{
+  "name": "bolao-copa-2026",
+  "version": "1.0.0",
+  "description": "Gerador de bolões para a Copa do Mundo FIFA 2026 — palpites de placar, ranking e quem avança.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2"
+  }
+}

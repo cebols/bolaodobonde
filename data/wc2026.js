@@ -1,0 +1,125 @@
+// Dados oficiais da Copa do Mundo FIFA 2026 (sorteio realizado em 05/12/2025).
+// 48 seleções, 12 grupos (A–L) de 4 times.
+// Datas das partidas são aproximadas e podem ser ajustadas pelo admin do bolão.
+
+export const GROUPS = {
+  A: ['México', 'África do Sul', 'Coreia do Sul', 'Tchéquia'],
+  B: ['Canadá', 'Bósnia e Herzegovina', 'Catar', 'Suíça'],
+  C: ['Brasil', 'Marrocos', 'Haiti', 'Escócia'],
+  D: ['Estados Unidos', 'Paraguai', 'Austrália', 'Turquia'],
+  E: ['Alemanha', 'Curaçao', 'Costa do Marfim', 'Equador'],
+  F: ['Holanda', 'Japão', 'Suécia', 'Tunísia'],
+  G: ['Bélgica', 'Egito', 'Irã', 'Nova Zelândia'],
+  H: ['Espanha', 'Cabo Verde', 'Arábia Saudita', 'Uruguai'],
+  I: ['França', 'Senegal', 'Iraque', 'Noruega'],
+  J: ['Argentina', 'Argélia', 'Áustria', 'Jordânia'],
+  K: ['Portugal', 'Congo (RDC)', 'Uzbequistão', 'Colômbia'],
+  L: ['Inglaterra', 'Croácia', 'Gana', 'Panamá'],
+};
+
+// Bandeiras (emoji) para deixar a interface mais bonita.
+export const FLAGS = {
+  'México': '🇲🇽', 'África do Sul': '🇿🇦', 'Coreia do Sul': '🇰🇷', 'Tchéquia': '🇨🇿',
+  'Canadá': '🇨🇦', 'Bósnia e Herzegovina': '🇧🇦', 'Catar': '🇶🇦', 'Suíça': '🇨🇭',
+  'Brasil': '🇧🇷', 'Marrocos': '🇲🇦', 'Haiti': '🇭🇹', 'Escócia': '🏴󠁧󠁢󠁳󠁣󠁴󠁿',
+  'Estados Unidos': '🇺🇸', 'Paraguai': '🇵🇾', 'Austrália': '🇦🇺', 'Turquia': '🇹🇷',
+  'Alemanha': '🇩🇪', 'Curaçao': '🇨🇼', 'Costa do Marfim': '🇨🇮', 'Equador': '🇪🇨',
+  'Holanda': '🇳🇱', 'Japão': '🇯🇵', 'Suécia': '🇸🇪', 'Tunísia': '🇹🇳',
+  'Bélgica': '🇧🇪', 'Egito': '🇪🇬', 'Irã': '🇮🇷', 'Nova Zelândia': '🇳🇿',
+  'Espanha': '🇪🇸', 'Cabo Verde': '🇨🇻', 'Arábia Saudita': '🇸🇦', 'Uruguai': '🇺🇾',
+  'França': '🇫🇷', 'Senegal': '🇸🇳', 'Iraque': '🇮🇶', 'Noruega': '🇳🇴',
+  'Argentina': '🇦🇷', 'Argélia': '🇩🇿', 'Áustria': '🇦🇹', 'Jordânia': '🇯🇴',
+  'Portugal': '🇵🇹', 'Congo (RDC)': '🇨🇩', 'Uzbequistão': '🇺🇿', 'Colômbia': '🇨🇴',
+  'Inglaterra': '🏴󠁧󠁢󠁥󠁮󠁧󠁿', 'Croácia': '🇭🇷', 'Gana': '🇬🇭', 'Panamá': '🇵🇦',
+};
+
+// Ordem de uma rodada simples (single round-robin) para 4 times: índices 0..3.
+const ROUND_ROBIN = [
+  [[0, 1], [2, 3]], // rodada 1
+  [[0, 2], [3, 1]], // rodada 2
+  [[3, 0], [1, 2]], // rodada 3
+];
+
+function isoDate(year, month, day, hour = 16) {
+  // month é 1-based aqui por conveniência.
+  const d = new Date(Date.UTC(year, month - 1, day, hour, 0, 0));
+  return d.toISOString();
+}
+
+// Gera a lista completa de partidas (104) de um bolão.
+// Fase de grupos com times reais; mata-mata com vagas a definir (admin preenche).
+export function buildFixtures() {
+  const matches = [];
+  let ord = 0;
+  const groupLetters = Object.keys(GROUPS);
+
+  // ---- Fase de grupos: 72 jogos (6 por grupo) ----
+  // Espalhamos as 3 rodadas ao longo de 11–27 de junho de 2026.
+  groupLetters.forEach((g, gi) => {
+    const teams = GROUPS[g];
+    ROUND_ROBIN.forEach((round, ri) => {
+      // Datas aproximadas por rodada.
+      const baseDay = [11, 18, 24][ri] + Math.floor(gi / 2);
+      round.forEach(([hi, ai]) => {
+        matches.push({
+          ord: ord++,
+          stage: 'group',
+          group_label: g,
+          round_label: `Grupo ${g} · ${ri + 1}ª rodada`,
+          home_team: teams[hi],
+          away_team: teams[ai],
+          home_label: null,
+          away_label: null,
+          kickoff: isoDate(2026, 6, Math.min(baseDay, 27), 16 + (hi % 4)),
+        });
+      });
+    });
+  });
+
+  // ---- Mata-mata: vagas a definir, preenchidas pelo admin ----
+  const ko = (stage, count, startDay, endDay, labelFn) => {
+    for (let i = 0; i < count; i++) {
+      const day = startDay + Math.round((i * (endDay - startDay)) / Math.max(1, count - 1));
+      matches.push({
+        ord: ord++,
+        stage,
+        group_label: null,
+        round_label: labelFn(i),
+        home_team: null,
+        away_team: null,
+        home_label: `Vaga ${i * 2 + 1}`,
+        away_label: `Vaga ${i * 2 + 2}`,
+        kickoff: isoDate(2026, 7, day, 16),
+      });
+    }
+  };
+
+  // Round of 32 (16 jogos): 28/jun a 03/jul.
+  for (let i = 0; i < 16; i++) {
+    const day = 28 + Math.floor((i * 6) / 16);
+    matches.push({
+      ord: ord++, stage: 'r32', group_label: null,
+      round_label: `16-avos · Jogo ${i + 1}`,
+      home_team: null, away_team: null,
+      home_label: `Classificado ${i * 2 + 1}`, away_label: `Classificado ${i * 2 + 2}`,
+      kickoff: isoDate(2026, day > 30 ? 7 : 6, day > 30 ? day - 30 : day, 16),
+    });
+  }
+  ko('r16', 8, 4, 7, (i) => `Oitavas · Jogo ${i + 1}`);
+  ko('qf', 4, 9, 11, (i) => `Quartas · Jogo ${i + 1}`);
+  ko('sf', 2, 14, 15, (i) => `Semifinal · Jogo ${i + 1}`);
+  ko('third', 1, 18, 18, () => `Disputa do 3º lugar`);
+  ko('final', 1, 19, 19, () => `FINAL`);
+
+  return matches;
+}
+
+export const STAGE_NAMES = {
+  group: 'Fase de Grupos',
+  r32: '16-avos de final',
+  r16: 'Oitavas de final',
+  qf: 'Quartas de final',
+  sf: 'Semifinais',
+  third: '3º lugar',
+  final: 'Final',
+};
