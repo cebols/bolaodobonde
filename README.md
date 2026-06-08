@@ -32,43 +32,56 @@ Para desenvolvimento com reload automático: `npm run dev`.
 ## 🧱 Stack
 
 - **Backend:** Node.js + Express (API REST)
-- **Banco:** SQLite via `better-sqlite3` (arquivo `bolao.db`, criado sozinho) — **zero credencial externa**
-- **Frontend:** SPA em HTML/CSS/JS puro (sem build), servida pelo próprio Express
+- **Banco:** **Postgres** quando `DATABASE_URL` está definida (ex.: Supabase) — recomendado
+  para produção/multiplayer. Sem `DATABASE_URL`, cai automaticamente para **SQLite** local
+  (`bolao.db`), ótimo para rodar na sua máquina sem nenhuma credencial.
+- **Frontend:** SPA em HTML/CSS/JS puro (sem build), servida pelo próprio Express (ou pela CDN da Vercel).
 
-Cada bolão é totalmente independente: tem sua própria cópia das 104 partidas e seus
-próprios resultados, então vários grupos de amigos podem usar a mesma instância sem se misturar.
+A camada de dados é única (`server/store.js`) e fala com os dois bancos com o mesmo código.
+Cada bolão é independente: tem sua própria cópia das 104 partidas e seus próprios resultados,
+então vários grupos de amigos usam a mesma instância sem se misturar.
 
 ## 🔧 Configuração
 
 | Variável | Padrão | Descrição |
 |----------|--------|-----------|
-| `PORT`   | `3000` | Porta do servidor |
-| `DB_PATH`| `./bolao.db` | Caminho do arquivo SQLite |
+| `DATABASE_URL` | _(vazio)_ | String de conexão Postgres (ex.: Supabase). Se definida, usa Postgres; senão, SQLite. |
+| `PORT`   | `3000` | Porta do servidor (ignorado na Vercel) |
+| `DB_PATH`| `./bolao.db` | Caminho do arquivo SQLite (modo local) |
 
 ## ☁️ Deploy
 
-### 🚀 Deploy de 1 clique
+### ⭐ Recomendado: Vercel + Supabase (Postgres)
+
+Backend de verdade, compartilhado e com URL pública. A Vercel faz o build/deploy na infra dela
+a cada push (via integração com o GitHub) e conecta no Postgres do Supabase.
+
+1. **Supabase:** crie um projeto em <https://supabase.com>. Em **Project Settings → Database →
+   Connection string → URI**, copie a string (use a do **Connection pooler**, porta `6543`,
+   ideal para serverless). As tabelas são criadas sozinhas no primeiro acesso.
+2. **Vercel:** em <https://vercel.com>, **Add New → Project → Import** este repositório do GitHub.
+3. Em **Environment Variables**, adicione `DATABASE_URL` com a string do Supabase.
+4. **Deploy.** A Vercel te dá uma URL `https://<projeto>.vercel.app`. Pronto, no ar. 🎉
+
+O `vercel.json` já está configurado: `/api/*` vai para a função serverless (Express) e o
+restante é servido como estático.
+
+### 🚀 Alternativa de 1 clique: Render (SQLite)
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/cebols/bolaodobonde/tree/claude/epic-allen-r6h24a)
 
-> O botão acima lê o `render.yaml` deste repositório e cria o serviço automaticamente.
-> Em ~2 min o Render te dá uma URL pública `https://bolao-copa-2026.onrender.com`.
-> **Atenção:** no plano *free* o serviço hiberna e o SQLite reseta — para manter os
-> palpites, mude `plan: free` para `starter` no `render.yaml` (ativa o disco persistente).
+> Lê o `render.yaml` e cria o serviço sozinho. No plano *free* o SQLite reseta quando o
+> serviço hiberna — para manter os palpites, defina `DATABASE_URL` (Supabase) nas env vars
+> ou troque `plan: free` por `starter` (disco persistente).
 
 ### Outras opções
 
-O app é Node + SQLite self-contained e sobe em qualquer lugar que rode Node:
-
 - **Docker:** `docker build -t bolao . && docker run -p 3000:3000 -v $PWD/data:/data bolao`
-- **Fly.io:** já tem `fly.toml` com volume persistente — `fly launch --copy-config --now`
-  e depois `fly volumes create bolao_data --size 1`.
-- **Railway:** detecta o Node automaticamente (`npm start`). Crie um *Volume* e aponte
-  `DB_PATH` para ele (ex.: `/data/bolao.db`).
+- **Fly.io:** `fly.toml` com volume persistente — `fly launch --copy-config --now` e
+  `fly volumes create bolao_data --size 1`. Defina `DATABASE_URL` para usar Postgres.
+- **Railway:** detecta o Node automaticamente (`npm start`). Use um Postgres da Railway e
+  aponte `DATABASE_URL`, ou um Volume com `DB_PATH`.
 - **VPS:** `npm install --omit=dev && npm start` atrás de um Nginx/Caddy.
-
-> Quer trocar SQLite por Postgres/Supabase no futuro? Toda a lógica de banco está isolada
-> em `server/db.js` — basta reimplementar as funções de lá.
 
 ## 🔐 Como funciona o acesso
 
@@ -81,12 +94,16 @@ O app é Node + SQLite self-contained e sobe em qualquer lugar que rode Node:
 
 ```
 server/
-  index.js   # API Express + servidor estático
-  db.js      # SQLite, schema, criação de bolão e regras de pontuação
+  app.js     # app Express (rotas da API + estático) — reusado local e na Vercel
+  index.js   # listener para `npm start` / Docker / Render / Fly
+  store.js   # camada de dados (Postgres OU SQLite), schema e regras de pontuação
+api/
+  index.js   # entrada serverless da Vercel (exporta o app Express)
 data/
   wc2026.js  # 48 seleções, 12 grupos reais, bandeiras e gerador das 104 partidas
 public/
   index.html, styles.css, app.js   # interface (SPA)
+vercel.json  # roteamento Vercel: /api -> função, resto -> estático
 ```
 
 ## 📊 Regras de pontuação (detalhe)
