@@ -9,38 +9,58 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USE_PG = !!process.env.DATABASE_URL;
 
 // ---------- driver ----------
+// A inicialização NUNCA lança no import: se falhar (ex.: SQLite num filesystem
+// read-only como o da Vercel), guardamos o erro e as queries retornam uma
+// mensagem clara — em vez de derrubar a função inteira (FUNCTION_INVOCATION_FAILED).
 let pgPool = null;
 let sqlite = null;
+let initError = null;
 
-if (USE_PG) {
-  const pg = (await import('pg')).default;
-  const url = process.env.DATABASE_URL;
-  const isLocal = /localhost|127\.0\.0\.1/.test(url);
-  pgPool = new pg.Pool({
-    connectionString: url,
-    ssl: isLocal ? false : { rejectUnauthorized: false },
-    max: Number(process.env.PG_POOL_MAX || 5),
-  });
-} else {
-  const Database = (await import('better-sqlite3')).default;
-  const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'bolao.db');
-  sqlite = new Database(DB_PATH);
-  sqlite.pragma('journal_mode = WAL');
-  sqlite.pragma('foreign_keys = ON');
+try {
+  if (USE_PG) {
+    const pg = (await import('pg')).default;
+    const url = process.env.DATABASE_URL;
+    const isLocal = /localhost|127\.0\.0\.1/.test(url);
+    pgPool = new pg.Pool({
+      connectionString: url,
+      ssl: isLocal ? false : { rejectUnauthorized: false },
+      max: Number(process.env.PG_POOL_MAX || 5),
+    });
+  } else {
+    const Database = (await import('better-sqlite3')).default;
+    const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'bolao.db');
+    sqlite = new Database(DB_PATH);
+    sqlite.pragma('journal_mode = WAL');
+    sqlite.pragma('foreign_keys = ON');
+  }
+} catch (e) {
+  initError = e;
+}
+
+function assertReady() {
+  if (initError) {
+    const hint = USE_PG
+      ? ''
+      : ' — sem DATABASE_URL o app usa SQLite, que não funciona no filesystem read-only da Vercel. Defina a env var DATABASE_URL (Postgres do Supabase).';
+    throw new Error(`Falha ao inicializar o banco: ${initError.message}${hint}`);
+  }
 }
 
 // Converte placeholders $1,$2 -> ? para o SQLite.
 const toSqlite = (sql) => sql.replace(/\$\d+/g, '?');
 
 export async function all(sql, params = []) {
+  assertReady();
   if (USE_PG) return (await pgPool.query(sql, params)).rows;
   return sqlite.prepare(toSqlite(sql)).all(...params);
 }
 export async function get(sql, params = []) {
+  assertReady();
   if (USE_PG) return (await pgPool.query(sql, params)).rows[0] || null;
   return sqlite.prepare(toSqlite(sql)).get(...params) || null;
 }
 export async function run(sql, params = []) {
+  assertReady();
   if (USE_PG) { const r = await pgPool.query(sql, params); return r.rows[0] || {}; }
   const info = sqlite.prepare(toSqlite(sql)).run(...params);
   return { changes: info.changes, lastID: info.lastInsertRowid };
@@ -117,6 +137,7 @@ let schemaPromise = null;
 export function ensureSchema() {
   if (!schemaPromise) {
     schemaPromise = (async () => {
+      assertReady();
       if (USE_PG) {
         // Postgres não aceita múltiplos statements com parâmetros, mas aceita sem.
         await pgPool.query(SCHEMA_PG);
@@ -131,8 +152,8 @@ export function ensureSchema() {
   }
   return schemaPromise;
 }
-// SQLite pode inicializar de imediato.
-if (!USE_PG) ensureSchema();
+// SQLite local pode inicializar de imediato (silenciando erro p/ não derrubar o import).
+if (!USE_PG && !initError) ensureSchema().catch(() => {});
 
 // ---------- helpers ----------
 export function genToken(bytes = 24) {
