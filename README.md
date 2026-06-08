@@ -47,11 +47,24 @@ próprios resultados, então vários grupos de amigos podem usar a mesma instân
 
 ## ☁️ Deploy
 
-Por ser um app Node + SQLite self-contained, sobe em qualquer lugar que rode Node e
-tenha disco persistente:
+### 🚀 Deploy de 1 clique
 
-- **Railway / Render / Fly.io:** comando de start `npm start`. Aponte `DB_PATH` para um
-  volume persistente (ex.: `/data/bolao.db`) para os palpites não se perderem em redeploy.
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/cebols/bolaodobonde/tree/claude/epic-allen-r6h24a)
+
+> O botão acima lê o `render.yaml` deste repositório e cria o serviço automaticamente.
+> Em ~2 min o Render te dá uma URL pública `https://bolao-copa-2026.onrender.com`.
+> **Atenção:** no plano *free* o serviço hiberna e o SQLite reseta — para manter os
+> palpites, mude `plan: free` para `starter` no `render.yaml` (ativa o disco persistente).
+
+### Outras opções
+
+O app é Node + SQLite self-contained e sobe em qualquer lugar que rode Node:
+
+- **Docker:** `docker build -t bolao . && docker run -p 3000:3000 -v $PWD/data:/data bolao`
+- **Fly.io:** já tem `fly.toml` com volume persistente — `fly launch --copy-config --now`
+  e depois `fly volumes create bolao_data --size 1`.
+- **Railway:** detecta o Node automaticamente (`npm start`). Crie um *Volume* e aponte
+  `DB_PATH` para ele (ex.: `/data/bolao.db`).
 - **VPS:** `npm install --omit=dev && npm start` atrás de um Nginx/Caddy.
 
 > Quer trocar SQLite por Postgres/Supabase no futuro? Toda a lógica de banco está isolada

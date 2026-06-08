@@ -1,0 +1,22 @@
+# Blueprint do Render — deploy de 1 clique.
+# Botão: https://render.com/deploy (aponta para este repositório)
+services:
+  - type: web
+    name: bolao-copa-2026
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DB_PATH
+        value: /var/data/bolao.db
+    # Disco persistente para o SQLite (necessário em planos pagos do Render).
+    # No plano FREE o disco é ignorado e os dados resetam quando o serviço hiberna.
+    # Para manter os palpites em produção, troque "plan: free" por "starter".
+    disk:
+      name: bolao-data
+      mountPath: /var/data
+      sizeGB: 1

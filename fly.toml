@@ -1,0 +1,24 @@
+# Configuração do Fly.io. Deploy:
+#   fly launch --copy-config --now   (ou: fly deploy)
+# Depois crie/anexe um volume para persistir o SQLite:
+#   fly volumes create bolao_data --size 1
+app = "bolao-copa-2026"
+primary_region = "gru"  # São Paulo
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  DB_PATH = "/data/bolao.db"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[mounts]]
+  source = "bolao_data"
+  destination = "/data"
