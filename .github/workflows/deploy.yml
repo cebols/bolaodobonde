@@ -1,0 +1,53 @@
+name: Deploy (Fly.io)
+
+# Deploy automático do Bolão da Copa 2026.
+# Pré-requisito (1 passo): em Settings → Secrets and variables → Actions,
+# crie o secret FLY_API_TOKEN com um token do Fly.io (fly tokens create deploy).
+# Depois é só rodar este workflow (aba Actions → Deploy (Fly.io) → Run workflow)
+# ou dar push nesta branch. A URL pública sai como https://<app>.fly.dev
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/epic-allen-r6h24a]
+    paths-ignore:
+      - 'README.md'
+      - '**/*.md'
+
+env:
+  # Nome global do app no Fly (precisa ser único no mundo).
+  # Se "bolao-copa-2026" já estiver em uso, troque aqui e em fly.toml.
+  FLY_APP: bolao-copa-2026
+  FLY_REGION: gru
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: deploy-bolao
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verifica token
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error::Falta o secret FLY_API_TOKEN. Crie em Settings → Secrets → Actions."
+            exit 1
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Cria o app (se ainda não existir)
+        run: flyctl apps create "$FLY_APP" || echo "App já existe, seguindo."
+
+      - name: Garante o volume persistente do SQLite
+        run: |
+          if ! flyctl volumes list -a "$FLY_APP" | grep -q bolao_data; then
+            flyctl volumes create bolao_data --size 1 --region "$FLY_REGION" -a "$FLY_APP" --yes
+          fi
+
+      - name: Deploy
+        run: flyctl deploy --remote-only -a "$FLY_APP"
+
+      - name: URL pública
+        run: echo "🚀 No ar em https://$FLY_APP.fly.dev"
