@@ -153,6 +153,7 @@ function navActions(html = '') { $('#nav-actions').innerHTML = html; }
 
 // ---------------- HOME ----------------
 function renderHome() {
+  stopPolling();
   navActions('');
   const recent = store.recent();
   $('#app').innerHTML = `
@@ -236,6 +237,26 @@ async function renderPool(slug) {
 
   navActions(`<a href="#/" class="btn-ghost btn-sm" style="text-decoration:none">← Início</a>`);
   drawPoolShell();
+  startPolling();
+}
+
+// Atualização "minuto a minuto": refaz o GET do bolão (que dispara o sync no servidor)
+// e re-renderiza as abas só-leitura (Chave/Ranking) sem atrapalhar quem digita palpites.
+let POLL_HANDLE = null;
+function stopPolling() { if (POLL_HANDLE) { clearInterval(POLL_HANDLE); POLL_HANDLE = null; } }
+function startPolling() {
+  stopPolling();
+  POLL_HANDLE = setInterval(async () => {
+    if (document.hidden || !PoolState.slug) return;
+    try {
+      const adminToken = store.getAdmin(PoolState.slug);
+      const fresh = await api('GET', `/api/pools/${PoolState.slug}`, null, adminToken ? { 'x-admin-token': adminToken } : {});
+      PoolState.data = fresh;
+      if (PoolState.tab === 'chave') renderBracket();
+      else if (PoolState.tab === 'ranking') renderRanking();
+      // aba "palpites" não é re-renderizada para não apagar o que está sendo digitado.
+    } catch (_) { /* silencioso */ }
+  }, 60000);
 }
 
 function drawPoolShell() {
@@ -243,6 +264,7 @@ function drawPoolShell() {
   const isAdmin = data.isAdmin;
   const tabs = [
     ['palpites', '🎯 Meus palpites'],
+    ['chave', '🗝️ Chave'],
     ['ranking', '📊 Ranking'],
   ];
   if (isAdmin) tabs.push(['admin', '⚙️ Admin']);
@@ -268,6 +290,7 @@ function drawPoolShell() {
   });
 
   if (PoolState.tab === 'palpites') renderPalpites();
+  else if (PoolState.tab === 'chave') renderBracket();
   else if (PoolState.tab === 'ranking') renderRanking();
   else if (PoolState.tab === 'admin') renderAdmin();
 }
@@ -378,6 +401,8 @@ async function renderPalpites() {
 
   const matches = PoolState.data.matches;
   const locks = PoolState.data.stageLocks || {};
+  const lock = PoolState.data.lock || { locked: false };
+  PoolState.globalLocked = !!lock.locked;
   const matchById = new Map(matches.map((m) => [m.id, m]));
 
   const groupKeys = Object.keys(META.groups);
@@ -389,6 +414,12 @@ async function renderPalpites() {
         <div style="text-align:right;flex:0"><button id="btn-logout" class="btn-soft btn-sm">Sair</button></div>
       </div>
     </div>`;
+
+  if (lock.locked) {
+    html += `<div class="lock-banner">🔒 <b>Palpites travados.</b> O organizador fechou as apostas — não dá mais para editar os placares.</div>`;
+  } else if (lock.lockAt) {
+    html += `<div class="lock-banner open">⏳ Palpites abertos. Fecham automaticamente em <b>${esc(fmtDate(new Date(lock.lockAt).toISOString()))}</b> (5 min antes do 1º jogo), salvo se o organizador mudar.</div>`;
+  }
 
   // ---- Nav lateral dos grupos (scroll horizontal) ----
   html += `<div class="group-nav" id="group-nav">
@@ -449,10 +480,12 @@ async function renderPalpites() {
     }
   }
 
-  html += `<div class="sticky-save">
-    <button id="btn-clear-all" class="btn-link-danger">🧹 Limpar tudo</button>
-    <button id="btn-save" class="btn-gold">💾 Salvar palpites</button>
-  </div>`;
+  if (!lock.locked) {
+    html += `<div class="sticky-save">
+      <button id="btn-clear-all" class="btn-link-danger">🧹 Limpar tudo</button>
+      <button id="btn-save" class="btn-gold">💾 Salvar palpites</button>
+    </div>`;
+  }
 
   view.innerHTML = html;
 
@@ -488,12 +521,14 @@ async function renderPalpites() {
     b.onclick = () => clearPredictions(b.dataset.clearGroup);
   });
   // limpar tudo (com confirmação)
-  $('#btn-clear-all').onclick = async () => {
+  const clearAllBtn = $('#btn-clear-all');
+  if (clearAllBtn) clearAllBtn.onclick = async () => {
     const ok = await confirmModal('Apagar TODOS os seus palpites?', 'Isso remove todos os placares que você ainda pode editar (jogos não iniciados). Não dá pra desfazer.');
     if (ok) clearPredictions(null);
   };
 
-  $('#btn-save').onclick = savePredictions;
+  const saveBtn = $('#btn-save');
+  if (saveBtn) saveBtn.onclick = savePredictions;
 }
 
 // Limpa palpites no servidor (group=null -> tudo) e recarrega a aba.
@@ -530,7 +565,7 @@ function confirmModal(title, body) {
 function matchRow(m) {
   const d = PoolState.draft[m.id] || {};
   const tbdH = m.home_team == null, tbdA = m.away_team == null;
-  const locked = m.locked || tbdH || tbdA;
+  const locked = m.locked || tbdH || tbdA || PoolState.globalLocked;
   const homeName = m.home_team ? `${flag(m.home_team)} <span>${esc(m.home_team)}</span>` : `<span class="tbd-team">${esc(m.home_label || 'A definir')}</span>`;
   const awayName = m.away_team ? `<span>${esc(m.away_team)}</span> ${flag(m.away_team)}` : `<span class="tbd-team">${esc(m.away_label || 'A definir')}</span>`;
 
@@ -608,6 +643,97 @@ function renderAuth(view, errMsg = '') {
   $('#a-login').onclick = () => handle('login');
 }
 
+// ---------- aba: chave (bracket ampulheta) ----------
+function bktTeamRow(team, label, score, win) {
+  const flagHtml = team ? flag(team) : '<span class="flag flag-ph" aria-hidden="true"></span>';
+  return `<div class="bkt-team ${team ? 'set' : ''} ${win ? 'win' : ''}">
+    ${flagHtml}<span class="nm">${team ? esc(team) : esc(label || 'A definir')}</span>
+    <span class="sc">${score == null ? '' : score}</span>
+  </div>`;
+}
+function bktMatch(m, extra = '') {
+  if (!m) return `<div class="bkt-match ${extra}">${bktTeamRow(null, 'A definir')}${bktTeamRow(null, 'A definir')}</div>`;
+  const fin = m.finished && m.home_score != null && m.away_score != null;
+  const hw = fin && m.home_score > m.away_score;
+  const aw = fin && m.away_score > m.home_score;
+  return `<div class="bkt-match ${fin ? 'done' : ''} ${extra}" title="${esc(m.round_label || '')}">
+    ${bktTeamRow(m.home_team, m.home_label, m.home_score, hw)}
+    ${bktTeamRow(m.away_team, m.away_label, m.away_score, aw)}
+  </div>`;
+}
+function bktColHtml(list, side, header, id) {
+  const boxes = list.length ? list.map((m) => bktMatch(m)).join('') : bktMatch(null);
+  return `<div class="bkt-col side-${side}" id="${id}"><div class="bkt-col-h">${esc(header)}</div>${boxes}</div>`;
+}
+
+function renderBracket() {
+  const view = $('#tabview');
+  const prevWrap = $('#bracket-wrap');
+  const prevScroll = prevWrap ? prevWrap.scrollLeft : null; // preserva scroll no auto-refresh
+  const M = (PoolState.data && PoolState.data.matches) || [];
+  const byStage = (s) => M.filter((m) => m.stage === s).sort((a, b) => a.ord - b.ord);
+  const r32 = byStage('r32'), r16 = byStage('r16'), qf = byStage('qf'), sf = byStage('sf');
+  const third = byStage('third'), final = byStage('final');
+  const half = (a) => { const k = Math.ceil(a.length / 2); return [a.slice(0, k), a.slice(k)]; };
+  const [r32L, r32R] = half(r32), [r16L, r16R] = half(r16), [qfL, qfR] = half(qf), [sfL, sfR] = half(sf);
+
+  // campeão (se a final terminou)
+  let champ = '';
+  const f = final[0];
+  if (f && f.finished && f.home_score != null && f.away_score != null && f.home_score !== f.away_score) {
+    const c = f.home_score > f.away_score ? f.home_team : f.away_team;
+    if (c) champ = `<div class="champion">🏆 Campeão: ${flag(c)} <span>${esc(c)}</span></div>`;
+  }
+
+  const koFilled = M.filter((m) => m.stage !== 'group' && m.home_team && m.away_team).length;
+  const koTotal = M.filter((m) => m.stage !== 'group').length;
+
+  const center = `<div class="bkt-col bkt-center" id="bkt-c4">
+    <div class="bkt-col-h">Final</div>
+    ${bktMatch(final[0], 'bkt-final-box')}
+    <div class="bkt-label">Disputa do 3º lugar</div>
+    ${bktMatch(third[0])}
+  </div>`;
+
+  const cols = [
+    bktColHtml(r32L, 'l', '16-avos', 'bkt-c0'),
+    bktColHtml(r16L, 'l', 'Oitavas', 'bkt-c1'),
+    bktColHtml(qfL, 'l', 'Quartas', 'bkt-c2'),
+    bktColHtml(sfL, 'l', 'Semi', 'bkt-c3'),
+    center,
+    bktColHtml(sfR, 'r', 'Semi', 'bkt-c5'),
+    bktColHtml(qfR, 'r', 'Quartas', 'bkt-c6'),
+    bktColHtml(r16R, 'r', 'Oitavas', 'bkt-c7'),
+    bktColHtml(r32R, 'r', '16-avos', 'bkt-c8'),
+  ].join('');
+
+  const navLabels = ['16-avos', 'Oitavas', 'Quartas', 'Semi', '🏆 Final', 'Semi', 'Quartas', 'Oitavas', '16-avos'];
+
+  view.innerHTML = `
+    <div class="card">
+      <h3>🗝️ Chave do mata-mata</h3>
+      <p class="muted bracket-intro">Monta-se rodada a rodada conforme os times se classificam (${koFilled}/${koTotal} confrontos definidos). Arraste para os lados para navegar.${PoolState.data.syncEnabled ? ' <span class="live-dot"></span>atualiza sozinho.' : ''}</p>
+      ${champ}
+      <div class="bracket-nav">
+        ${navLabels.map((l, i) => `<button data-bkt="bkt-c${i}">${esc(l)}</button>`).join('')}
+      </div>
+      <div class="bracket-wrap" id="bracket-wrap">
+        <div class="bracket">${cols}</div>
+      </div>
+    </div>`;
+
+  view.querySelectorAll('[data-bkt]').forEach((b) => {
+    b.onclick = () => { const el = $('#' + b.dataset.bkt); if (el) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' }); };
+  });
+  // mantém o scroll no auto-refresh; na 1ª vez, centraliza na final
+  const wrap = $('#bracket-wrap');
+  const c4 = $('#bkt-c4');
+  if (wrap && c4) {
+    wrap.scrollLeft = prevScroll != null ? prevScroll
+      : Math.max(0, c4.offsetLeft - (wrap.clientWidth - c4.clientWidth) / 2);
+  }
+}
+
 // ---------- aba: ranking ----------
 async function renderRanking() {
   const view = $('#tabview');
@@ -647,6 +773,7 @@ async function renderAdmin() {
 
   const base = location.origin + location.pathname + '#/p/' + encodeURIComponent(PoolState.slug);
   const s = data.pool.scoring;
+  const lk = data.lock || { mode: 'auto', locked: false, lockAt: null };
 
   let html = `
     <div class="banner">
@@ -671,6 +798,17 @@ async function renderAdmin() {
         ? `<p class="muted">Ligado. Os placares se atualizam sozinhos (a cada acesso, no máx. 1x/min). Force agora se quiser:</p>
            <button id="btn-sync" class="btn-soft">Sincronizar agora</button>`
         : `<p class="muted">Desligado. Para ativar, defina a env var <b>FOOTBALL_DATA_TOKEN</b> (chave grátis de football-data.org) na Vercel e faça redeploy. Sem isso, lance os placares na mão abaixo.</p>`}
+    </div>
+
+    <div class="card">
+      <h3>🔒 Trava de palpites</h3>
+      <p class="muted">Status: <b style="color:${lk.locked ? 'var(--danger)' : 'var(--green-bright)'}">${lk.locked ? 'TRAVADO 🔒' : 'ABERTO 🔓'}</b>${lk.lockAt ? ` · no automático, trava em <b>${esc(fmtDate(new Date(lk.lockAt).toISOString()))}</b> (5 min antes do 1º jogo)` : ''}.</p>
+      <div class="lock-state">
+        <button class="btn-soft ${lk.mode === 'auto' ? 'active' : ''}" data-lock="auto">⏱ Automático</button>
+        <button class="btn-soft ${lk.mode === 'open' ? 'active' : ''}" data-lock="open">🔓 Abrir agora</button>
+        <button class="btn-soft ${lk.mode === 'locked' ? 'active' : ''}" data-lock="locked">🔒 Travar agora</button>
+      </div>
+      <p class="muted">No modo <b>Automático</b>, abre até 5 min antes do primeiro jogo e trava sozinho. Use “Abrir” ou “Travar” para forçar quando quiser.</p>
     </div>
 
     <div class="card">
@@ -700,6 +838,17 @@ async function renderAdmin() {
   const copy = (id) => { const el = $('#' + id); el.select(); navigator.clipboard?.writeText(el.value); toast('Copiado! 📋'); };
   $('#copy-share').onclick = () => copy('sharelink');
   $('#copy-adm').onclick = () => copy('admtok');
+
+  view.querySelectorAll('[data-lock]').forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api('PUT', `/api/pools/${PoolState.slug}/lock`, { mode: b.dataset.lock }, { 'x-admin-token': adminToken });
+        toast('Trava atualizada 🔒');
+        PoolState.data = await api('GET', `/api/pools/${PoolState.slug}`, null, { 'x-admin-token': adminToken });
+        renderAdmin();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
 
   const syncBtn = $('#btn-sync');
   if (syncBtn) syncBtn.onclick = async () => {

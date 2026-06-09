@@ -91,7 +91,23 @@ function publicPool(pool) {
       pts_outcome: pool.pts_outcome, pts_advance: pool.pts_advance,
     },
     lock_at_kickoff: !!pool.lock_at_kickoff,
+    lock_mode: pool.lock_mode || 'auto',
   };
+}
+
+// Trava GLOBAL dos palpites: por padrão ('auto') trava 5 min antes do 1º jogo do bolão.
+// O admin pode forçar 'open' (sempre liberado) ou 'locked' (sempre travado).
+const LOCK_LEAD_MS = 5 * 60 * 1000;
+function lockInfo(pool, matches) {
+  const kickoffs = matches.map((m) => new Date(m.kickoff).getTime()).filter((n) => !Number.isNaN(n));
+  const first = kickoffs.length ? Math.min(...kickoffs) : null;
+  const lockAt = first != null ? first - LOCK_LEAD_MS : null;
+  const mode = pool.lock_mode || 'auto';
+  let locked;
+  if (mode === 'locked') locked = true;
+  else if (mode === 'open') locked = false;
+  else locked = lockAt != null && Date.now() >= lockAt;
+  return { mode, locked, lockAt, firstKickoff: first };
 }
 function matchPublic(m) {
   return {
@@ -131,6 +147,7 @@ app.get('/api/pools/:slug', wrap(async (req, res) => {
     matches: matches.map(matchPublic),
     participants: parts.map((p) => p.name),
     stageLocks: stageLocks(matches),
+    lock: lockInfo(pool, matches),
     syncEnabled: SYNC_ENABLED,
   });
 }));
@@ -182,6 +199,9 @@ app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
   const predictions = Array.isArray(req.body?.predictions) ? req.body.predictions : [];
 
   const matchRows = await all('SELECT * FROM matches WHERE pool_id = $1', [pool.id]);
+  if (lockInfo(pool, matchRows).locked) {
+    return res.status(403).json({ error: 'Palpites travados pelo organizador. Não dá mais para editar.' });
+  }
   const matchById = new Map(matchRows.map((m) => [m.id, m]));
   const locks = stageLocks(matchRows);
 
@@ -219,6 +239,9 @@ app.post('/api/pools/:slug/predictions/clear', wrap(async (req, res) => {
 
   const group = req.body?.group || null;
   const matchRows = await all('SELECT * FROM matches WHERE pool_id = $1', [pool.id]);
+  if (lockInfo(pool, matchRows).locked) {
+    return res.status(403).json({ error: 'Palpites travados pelo organizador.' });
+  }
   const isLocked = (m) => m.finished || (pool.lock_at_kickoff && new Date(m.kickoff).getTime() <= Date.now());
   const ids = matchRows
     .filter((m) => !isLocked(m) && (!group || (m.stage === 'group' && m.group_label === group)))
@@ -276,7 +299,17 @@ app.get('/api/pools/:slug/admin', wrap(async (req, res) => {
   const pool = await requireAdmin(req, res); if (!pool) return;
   const matches = await all('SELECT * FROM matches WHERE pool_id = $1 ORDER BY ord', [pool.id]);
   const participants = await all('SELECT id, name FROM participants WHERE pool_id = $1 ORDER BY name', [pool.id]);
-  res.json({ pool: publicPool(pool), matches: matches.map(matchPublic), participants });
+  res.json({ pool: publicPool(pool), matches: matches.map(matchPublic), participants, lock: lockInfo(pool, matches) });
+}));
+
+// Admin define o modo de trava global: 'auto' (5 min antes do 1º jogo), 'open' ou 'locked'.
+app.put('/api/pools/:slug/lock', wrap(async (req, res) => {
+  const pool = await requireAdmin(req, res); if (!pool) return;
+  const mode = String(req.body?.mode || '').trim();
+  if (!['auto', 'open', 'locked'].includes(mode)) return res.status(400).json({ error: 'Modo inválido.' });
+  await run('UPDATE pools SET lock_mode = $1 WHERE id = $2', [mode, pool.id]);
+  const matches = await all('SELECT kickoff FROM matches WHERE pool_id = $1', [pool.id]);
+  res.json({ lock: lockInfo({ ...pool, lock_mode: mode }, matches) });
 }));
 
 app.put('/api/pools/:slug/matches/:id', wrap(async (req, res) => {

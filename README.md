@@ -18,6 +18,12 @@ Já vem com **as 48 seleções e os 12 grupos reais** do sorteio de 05/12/2025 e
 - **Login persistente**: neste aparelho você fica logado e volta direto pro seu bolão.
 - **Resultados automáticos** (opcional): com a env var `FOOTBALL_DATA_TOKEN`, os placares
   se atualizam sozinhos (inclusive ao vivo) via football-data.org e o ranking recalcula.
+  A interface ainda faz polling a cada 60s (atualização minuto a minuto nas abas Chave/Ranking).
+- **Chave do mata-mata** em formato ampulheta (final central), que se monta rodada a rodada
+  conforme os times se classificam — com scroll lateral no mobile.
+- **Trava de palpites** pelo organizador: por padrão fecha 5 min antes do 1º jogo, mas o
+  admin pode abrir/travar quando quiser.
+- **Tema escuro** (dark mode).
 - **Ranking ao vivo** que recalcula sozinho a cada resultado.
 - **Pontuação configurável** pelo admin:
   - 🎯 Placar exato (padrão **10**)

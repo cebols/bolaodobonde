@@ -79,6 +79,7 @@ const SCHEMA_PG = `
     pts_outcome INTEGER NOT NULL DEFAULT 5,
     pts_advance INTEGER NOT NULL DEFAULT 5,
     lock_at_kickoff INTEGER NOT NULL DEFAULT 1,
+    lock_mode TEXT NOT NULL DEFAULT 'auto',
     synced_at TIMESTAMPTZ
   );
   CREATE TABLE IF NOT EXISTS participants (
@@ -146,9 +147,11 @@ export function ensureSchema() {
         for (const stmt of stmts) await pgPool.query(stmt);
         // Colunas adicionadas depois (idempotente p/ bancos já existentes).
         await pgPool.query('ALTER TABLE pools ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ').catch(() => {});
+        await pgPool.query("ALTER TABLE pools ADD COLUMN IF NOT EXISTS lock_mode TEXT NOT NULL DEFAULT 'auto'").catch(() => {});
       } else {
         sqlite.exec(SCHEMA_SQLITE);
         try { sqlite.exec('ALTER TABLE pools ADD COLUMN synced_at TEXT'); } catch (_) { /* já existe */ }
+        try { sqlite.exec("ALTER TABLE pools ADD COLUMN lock_mode TEXT NOT NULL DEFAULT 'auto'"); } catch (_) { /* já existe */ }
       }
     })().catch((e) => {
       // Não envenena o cache: permite nova tentativa no próximo acesso.
