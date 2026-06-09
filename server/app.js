@@ -7,7 +7,7 @@ import {
   recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant,
 } from './store.js';
 import { syncPool, maybeSync, SYNC_ENABLED } from './sync.js';
-import { GROUPS, FLAGS, CODES, STAGE_NAMES } from '../data/wc2026.js';
+import { GROUPS, FLAGS, CODES, STAGE_NAMES, FIFA_RANK } from '../data/wc2026.js';
 
 // Ordem das fases e regra de liberação: uma fase só abre para palpites quando a
 // anterior terminou por completo (16-avos só após a fase de grupos, etc.).
@@ -102,7 +102,7 @@ function matchPublic(m) {
 app.get('/api/meta', (req, res) => {
   res.json({
     groups: GROUPS, flags: FLAGS, codes: CODES, stageNames: STAGE_NAMES,
-    stageOrder: STAGE_ORDER, syncEnabled: SYNC_ENABLED,
+    stageOrder: STAGE_ORDER, syncEnabled: SYNC_ENABLED, fifaRank: FIFA_RANK,
   });
 });
 

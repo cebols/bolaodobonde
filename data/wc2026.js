@@ -50,6 +50,21 @@ export const CODES = {
   'Inglaterra': 'gb-eng', 'Croácia': 'hr', 'Gana': 'gh', 'Panamá': 'pa',
 };
 
+// Posição aproximada no Ranking Mundial da FIFA (menor = melhor). Usado APENAS como
+// último critério de desempate (fair play não é modelado — não há cartões num palpite).
+export const FIFA_RANK = {
+  'Argentina': 1, 'Espanha': 2, 'França': 3, 'Inglaterra': 4, 'Brasil': 5,
+  'Portugal': 6, 'Holanda': 7, 'Bélgica': 8, 'Alemanha': 9, 'Croácia': 10,
+  'Marrocos': 11, 'Colômbia': 12, 'Uruguai': 13, 'Estados Unidos': 14, 'México': 15,
+  'Suíça': 16, 'Senegal': 17, 'Japão': 18, 'Irã': 19, 'Coreia do Sul': 20,
+  'Austrália': 21, 'Equador': 22, 'Áustria': 23, 'Suécia': 24, 'Turquia': 25,
+  'Egito': 26, 'Noruega': 27, 'Canadá': 28, 'Costa do Marfim': 29, 'Catar': 30,
+  'Arábia Saudita': 31, 'Escócia': 32, 'Paraguai': 33, 'Tunísia': 34, 'Argélia': 35,
+  'Tchéquia': 36, 'Panamá': 37, 'Uzbequistão': 38, 'Jordânia': 39, 'Iraque': 40,
+  'África do Sul': 41, 'Bósnia e Herzegovina': 42, 'Gana': 43, 'Cabo Verde': 44,
+  'Congo (RDC)': 45, 'Curaçao': 46, 'Nova Zelândia': 47, 'Haiti': 48,
+};
+
 // Nomes em inglês (e variações comuns) -> nome interno em PT. Usado para casar os
 // jogos vindos do football-data.org com as seleções do bolão.
 export const EN_TO_PT = {

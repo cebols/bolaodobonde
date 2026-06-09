@@ -71,8 +71,10 @@ function dayKey(iso) {
   return new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
 }
 
-// ---------------- classificação (espelho do servidor) ----------------
-function groupTableJS(teams, games) {
+// ---------------- classificação (espelho do servidor, com desempate FIFA 2026) ----------------
+const fifaRk = (t) => (META.fifaRank && META.fifaRank[t]) || 999;
+
+function baseStatsJS(teams, games) {
   const table = {};
   for (const t of teams) table[t] = { team: t, j: 0, pts: 0, gf: 0, ga: 0 };
   for (const m of games) {
@@ -86,9 +88,46 @@ function groupTableJS(teams, games) {
     else if (m.home_score < m.away_score) a.pts += 3;
     else { h.pts += 1; a.pts += 1; }
   }
-  return Object.values(table)
-    .map((r) => ({ ...r, gd: r.gf - r.ga }))
-    .sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || x.team.localeCompare(y.team));
+  for (const t of teams) table[t].gd = table[t].gf - table[t].ga;
+  return table;
+}
+
+// Desempate entre times com a MESMA pontuação: confronto direto (pts > saldo > gols),
+// depois critérios gerais (saldo > gols) e, por fim, ranking FIFA.
+function resolveTieJS(tied, games, base) {
+  const set = new Set(tied);
+  const h = {};
+  for (const t of tied) h[t] = { pts: 0, gf: 0, gd: 0 };
+  for (const m of games) {
+    if (m.home_score == null || m.away_score == null) continue;
+    if (!set.has(m.home_team) || !set.has(m.away_team)) continue;
+    const H = h[m.home_team], A = h[m.away_team];
+    H.gf += m.home_score; A.gf += m.away_score;
+    H.gd += m.home_score - m.away_score; A.gd += m.away_score - m.home_score;
+    if (m.home_score > m.away_score) H.pts += 3;
+    else if (m.home_score < m.away_score) A.pts += 3;
+    else { H.pts += 1; A.pts += 1; }
+  }
+  return [...tied].sort((x, y) =>
+    h[y].pts - h[x].pts || h[y].gd - h[x].gd || h[y].gf - h[x].gf ||
+    base[y].gd - base[x].gd || base[y].gf - base[x].gf ||
+    fifaRk(x) - fifaRk(y) || x.localeCompare(y));
+}
+
+function groupTableJS(teams, games) {
+  const base = baseStatsJS(teams, games);
+  const order = [...teams].sort((a, b) => base[b].pts - base[a].pts);
+  const result = [];
+  let i = 0;
+  while (i < order.length) {
+    let j = i + 1;
+    while (j < order.length && base[order[j]].pts === base[order[i]].pts) j++;
+    const tied = order.slice(i, j);
+    if (tied.length === 1) result.push(tied[0]);
+    else result.push(...resolveTieJS(tied, games, base));
+    i = j;
+  }
+  return result.map((t) => base[t]);
 }
 
 // ---------------- router ----------------
@@ -266,7 +305,7 @@ function thirdsRows() {
     const t = groupTableJS(META.groups[g], draftGroupGames(g));
     return { ...t[2], group: g };
   });
-  return rows.sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || x.team.localeCompare(y.team));
+  return rows.sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || fifaRk(x.team) - fifaRk(y.team) || x.team.localeCompare(y.team));
 }
 function thirdsHtml() {
   return thirdsRows().map((r, i) => `<div class="third-row ${i < 8 ? 'in' : 'out'}">
