@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   all, get, run, ensureSchema, USE_PG,
   createPool, genToken, hashPin,
-  recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant,
+  recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant, resolveKnockout,
 } from './store.js';
 import { syncPool, maybeSync, SYNC_ENABLED, diagnose } from './sync.js';
 import { GROUPS, FLAGS, CODES, STAGE_NAMES, FIFA_RANK } from '../data/wc2026.js';
@@ -348,6 +348,7 @@ app.put('/api/pools/:slug/matches/:id', wrap(async (req, res) => {
   if (touchedResult) {
     await recomputeMatch(m.id);
     if (m.group_label) await recomputeAdvanceAll(pool.id);
+    await resolveKnockout(pool.id); // preenche o chaveamento conforme as fases terminam
   }
   const updated = await get('SELECT * FROM matches WHERE id = $1', [m.id]);
   res.json({ match: matchPublic(updated) });
@@ -370,6 +371,7 @@ app.put('/api/pools/:slug/settings', wrap(async (req, res) => {
   const finished = await all('SELECT id FROM matches WHERE pool_id = $1 AND finished = 1', [pool.id]);
   for (const m of finished) await recomputeMatch(m.id);
   await recomputeAdvanceAll(pool.id);
+  await resolveKnockout(pool.id);
 
   res.json({ ok: true });
 }));

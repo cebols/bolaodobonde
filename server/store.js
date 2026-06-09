@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildFixtures, GROUPS, FIFA_RANK } from '../data/wc2026.js';
+import { buildFixtures, GROUPS, FIFA_RANK, KO_SEEDS, BT_SLOTS, seedLabel } from '../data/wc2026.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USE_PG = !!process.env.DATABASE_URL;
@@ -393,6 +393,83 @@ export async function recomputeAdvanceAll(poolId) {
   const pool = await get('SELECT * FROM pools WHERE id = $1', [poolId]);
   const parts = await all('SELECT id FROM participants WHERE pool_id = $1', [poolId]);
   for (const p of parts) await recomputeAdvanceForParticipant(pool, p.id);
+}
+
+// ---------- auto-resolução do chaveamento (Anexo C) ----------
+// Acha um pareamento válido (matching bipartido) entre os 8 grupos cujo 3º se
+// classificou e os 8 slots "Melhor 3º", respeitando os grupos permitidos por slot.
+function assignBTSlots(thirdGroups) {
+  const slots = Object.keys(BT_SLOTS);
+  const assignment = {};
+  const used = new Set();
+  const backtrack = (i) => {
+    if (i === slots.length) return true;
+    const slot = slots[i];
+    for (const g of BT_SLOTS[slot]) {
+      if (thirdGroups.includes(g) && !used.has(g)) {
+        used.add(g); assignment[slot] = g;
+        if (backtrack(i + 1)) return true;
+        used.delete(g); delete assignment[slot];
+      }
+    }
+    return false;
+  };
+  return backtrack(0) ? assignment : null;
+}
+
+// Preenche automaticamente os times do mata-mata conforme as fases terminam.
+// Idempotente: só preenche quando o "seed" do confronto já é resolvível.
+export async function resolveKnockout(poolId) {
+  const matches = await all('SELECT * FROM matches WHERE pool_id = $1 ORDER BY ord', [poolId]);
+  const byOrd = new Map(matches.map((m) => [m.ord, m]));
+  const groupGamesOf = (g) => matches.filter((m) => m.stage === 'group' && m.group_label === g);
+
+  // 1º/2º/3º de cada grupo encerrado
+  const groupRes = {};
+  for (const g of Object.keys(GROUPS)) {
+    const gm = groupGamesOf(g);
+    if (gm.length && gm.every((m) => m.finished)) {
+      const r = groupTable(GROUPS[g], gm);
+      groupRes[g] = { first: r[0].team, second: r[1].team, third: r[2].team };
+    }
+  }
+
+  // 8 melhores 3ºs + alocação nos slots (só quando TODOS os grupos terminaram)
+  const btTeam = {};
+  if (Object.keys(GROUPS).every((g) => groupRes[g])) {
+    const thirds = Object.keys(GROUPS).map((g) => ({ ...groupTable(GROUPS[g], groupGamesOf(g))[2], group: g }));
+    const best8 = rankThirds(thirds);
+    const best8Groups = best8.map((team) => thirds.find((t) => t.team === team).group);
+    const assign = assignBTSlots(best8Groups);
+    if (assign) for (const [slot, g] of Object.entries(assign)) btTeam[slot] = groupRes[g].third;
+  }
+
+  const decided = (m) => m && m.finished && m.home_score != null && m.away_score != null && m.home_score !== m.away_score;
+  const winnerOf = (m) => (decided(m) ? (m.home_score > m.away_score ? m.home_team : m.away_team) : null);
+  const loserOf = (m) => (decided(m) ? (m.home_score > m.away_score ? m.away_team : m.home_team) : null);
+  const resolveSeed = (seed) => {
+    if (!seed) return null;
+    if (/^1[A-L]$/.test(seed)) return groupRes[seed[1]]?.first || null;
+    if (/^2[A-L]$/.test(seed)) return groupRes[seed[1]]?.second || null;
+    if (seed.startsWith('BT')) return btTeam[seed] || null;
+    if (seed.startsWith('W')) return winnerOf(byOrd.get(Number(seed.slice(1))));
+    if (seed.startsWith('L')) return loserOf(byOrd.get(Number(seed.slice(1))));
+    return null;
+  };
+
+  for (const m of matches) {
+    const seed = KO_SEEDS[m.ord];
+    if (!seed) continue;
+    const h = resolveSeed(seed.home);
+    const a = resolveSeed(seed.away);
+    const newH = h != null ? h : m.home_team; // preenche só quando resolvível
+    const newA = a != null ? a : m.away_team;
+    const hLabel = seedLabel(seed.home), aLabel = seedLabel(seed.away);
+    if (newH !== m.home_team || newA !== m.away_team || hLabel !== m.home_label || aLabel !== m.away_label) {
+      await run('UPDATE matches SET home_team = $1, away_team = $2, home_label = $3, away_label = $4 WHERE id = $5',
+        [newH, newA, hLabel, aLabel, m.id]);
+    }
+  }
 }
 
 export { USE_PG };

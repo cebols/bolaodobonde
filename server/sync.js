@@ -2,7 +2,7 @@
 // Requer a env var FOOTBALL_DATA_TOKEN (chave gratuita de https://football-data.org).
 // É best-effort: se a API falhar ou um jogo não casar, o app segue normal e o
 // admin pode lançar/ajustar o placar na mão.
-import { all, get, run, recomputeMatch, recomputeAdvanceAll } from './store.js';
+import { all, get, run, recomputeMatch, recomputeAdvanceAll, resolveKnockout } from './store.js';
 import { EN_TO_PT, STAGE_NAMES } from '../data/wc2026.js';
 
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN || '';
@@ -95,6 +95,7 @@ export async function syncPool(pool, { force = false } = {}) {
   }
 
   if (touchedGroups.size) await recomputeAdvanceAll(pool.id);
+  if (updated) await resolveKnockout(pool.id); // preenche o chaveamento
   await run('UPDATE pools SET synced_at = $1 WHERE id = $2', [new Date().toISOString(), pool.id]);
   return { updated };
 }
