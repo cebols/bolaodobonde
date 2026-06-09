@@ -78,7 +78,8 @@ const SCHEMA_PG = `
     pts_goaldiff INTEGER NOT NULL DEFAULT 7,
     pts_outcome INTEGER NOT NULL DEFAULT 5,
     pts_advance INTEGER NOT NULL DEFAULT 5,
-    lock_at_kickoff INTEGER NOT NULL DEFAULT 1
+    lock_at_kickoff INTEGER NOT NULL DEFAULT 1,
+    synced_at TIMESTAMPTZ
   );
   CREATE TABLE IF NOT EXISTS participants (
     id SERIAL PRIMARY KEY,
@@ -143,8 +144,11 @@ export function ensureSchema() {
         // do Supabase (pgBouncer), que pode falhar com múltiplos statements juntos.
         const stmts = SCHEMA_PG.split(';').map((s) => s.trim()).filter(Boolean);
         for (const stmt of stmts) await pgPool.query(stmt);
+        // Colunas adicionadas depois (idempotente p/ bancos já existentes).
+        await pgPool.query('ALTER TABLE pools ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ').catch(() => {});
       } else {
         sqlite.exec(SCHEMA_SQLITE);
+        try { sqlite.exec('ALTER TABLE pools ADD COLUMN synced_at TEXT'); } catch (_) { /* já existe */ }
       }
     })().catch((e) => {
       // Não envenena o cache: permite nova tentativa no próximo acesso.
@@ -228,47 +232,123 @@ export async function recomputeMatch(matchId) {
   }
 }
 
-// Classificação real de um grupo (top 2) quando todos os 6 jogos terminaram.
-export async function computeGroupTop2(poolId, groupLabel) {
-  const matches = await all(
-    "SELECT * FROM matches WHERE pool_id = $1 AND stage = 'group' AND group_label = $2",
-    [poolId, groupLabel]
-  );
-  if (matches.length === 0 || !matches.every((m) => m.finished)) return null;
+// ---------- classificação (tabela de grupo, top 2, melhores 3ºs) ----------
+// Linha pseudo-grupo onde guardamos a pontuação dos 3ºs colocados de cada palpiteiro.
+export const THIRDS_KEY = '__3__';
 
+// Monta a tabela de um grupo a partir de uma lista de jogos com placar.
+// Cada jogo: { home_team, away_team, home_score, away_score }. Jogos sem placar
+// (null) são ignorados — útil tanto para o real (parcial) quanto para o palpite.
+export function groupTable(teams, games) {
   const table = {};
-  for (const t of GROUPS[groupLabel]) table[t] = { team: t, pts: 0, gf: 0, ga: 0 };
-  for (const m of matches) {
+  for (const t of teams) table[t] = { team: t, j: 0, pts: 0, gf: 0, ga: 0 };
+  for (const m of games) {
+    if (m.home_score == null || m.away_score == null) continue;
     const h = table[m.home_team], a = table[m.away_team];
     if (!h || !a) continue;
+    h.j++; a.j++;
     h.gf += m.home_score; h.ga += m.away_score;
     a.gf += m.away_score; a.ga += m.home_score;
     if (m.home_score > m.away_score) h.pts += 3;
     else if (m.home_score < m.away_score) a.pts += 3;
     else { h.pts += 1; a.pts += 1; }
   }
-  const ranked = Object.values(table).sort((x, y) =>
-    y.pts - x.pts || (y.gf - y.ga) - (x.gf - x.ga) || y.gf - x.gf || x.team.localeCompare(y.team)
+  return Object.values(table)
+    .map((r) => ({ ...r, gd: r.gf - r.ga }))
+    .sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || x.team.localeCompare(y.team));
+}
+
+// Ordena os 12 terceiros colocados e devolve os 8 melhores (regra da Copa de 48).
+export function rankThirds(thirdRows) {
+  return [...thirdRows]
+    .sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || x.team.localeCompare(y.team))
+    .slice(0, 8)
+    .map((r) => r.team);
+}
+
+async function groupGames(poolId, groupLabel) {
+  return all(
+    "SELECT * FROM matches WHERE pool_id = $1 AND stage = 'group' AND group_label = $2 ORDER BY ord",
+    [poolId, groupLabel]
   );
+}
+
+// Top 2 reais de um grupo — só quando os 6 jogos terminaram.
+export async function computeGroupTop2(poolId, groupLabel) {
+  const matches = await groupGames(poolId, groupLabel);
+  if (matches.length === 0 || !matches.every((m) => m.finished)) return null;
+  const ranked = groupTable(GROUPS[groupLabel], matches);
   return [ranked[0].team, ranked[1].team];
 }
 
-export async function recomputeQualifiers(poolId, groupLabel) {
-  const pool = await get('SELECT * FROM pools WHERE id = $1', [poolId]);
-  const top2 = await computeGroupTop2(poolId, groupLabel);
-  const rows = await all(
-    'SELECT * FROM qualifiers WHERE pool_id = $1 AND group_label = $2',
-    [poolId, groupLabel]
-  );
-  for (const q of rows) {
-    let pts = 0;
-    if (top2) {
-      if (q.team_first && top2.includes(q.team_first)) pts += pool.pts_advance;
-      if (q.team_second && top2.includes(q.team_second)) pts += pool.pts_advance;
-    }
-    await run('UPDATE qualifiers SET points = $1 WHERE id = $2', [pts, q.id]);
+// Os 8 melhores 3ºs reais — só quando TODOS os 12 grupos terminaram.
+export async function computeRealThirds(poolId) {
+  const thirds = [];
+  for (const g of Object.keys(GROUPS)) {
+    const matches = await groupGames(poolId, g);
+    if (matches.length === 0 || !matches.every((m) => m.finished)) return null;
+    thirds.push(groupTable(GROUPS[g], matches)[2]);
   }
-  return top2;
+  return rankThirds(thirds);
+}
+
+// Classificação prevista por um palpiteiro (a partir dos placares que ele chutou).
+async function participantGroupTables(poolId, participantId) {
+  const matches = await all(
+    "SELECT m.*, p.home_score AS p_home, p.away_score AS p_away FROM matches m " +
+    "LEFT JOIN predictions p ON p.match_id = m.id AND p.participant_id = $2 " +
+    "WHERE m.pool_id = $1 AND m.stage = 'group'",
+    [poolId, participantId]
+  );
+  const byGroup = {};
+  for (const m of matches) {
+    (byGroup[m.group_label] = byGroup[m.group_label] || []).push({
+      home_team: m.home_team, away_team: m.away_team,
+      home_score: m.p_home, away_score: m.p_away,
+    });
+  }
+  const tables = {};
+  const thirds = [];
+  for (const g of Object.keys(GROUPS)) {
+    const t = groupTable(GROUPS[g], byGroup[g] || []);
+    tables[g] = t;
+    thirds.push(t[2]);
+  }
+  return { tables, predThirds: rankThirds(thirds) };
+}
+
+// Recalcula a pontuação de "quem avança" de um palpiteiro (top 2 de cada grupo
+// + os 8 melhores 3ºs), comparando o previsto (placares dele) com o real.
+export async function recomputeAdvanceForParticipant(pool, participantId) {
+  const { tables, predThirds } = await participantGroupTables(pool.id, participantId);
+  const realThirds = await computeRealThirds(pool.id);
+
+  for (const g of Object.keys(GROUPS)) {
+    const predTop2 = [tables[g][0].team, tables[g][1].team];
+    const realTop2 = await computeGroupTop2(pool.id, g);
+    let pts = 0;
+    if (realTop2) for (const t of predTop2) if (realTop2.includes(t)) pts += pool.pts_advance;
+    await run(`INSERT INTO qualifiers (participant_id, pool_id, group_label, team_first, team_second, points)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (participant_id, group_label)
+      DO UPDATE SET team_first = excluded.team_first, team_second = excluded.team_second, points = excluded.points`,
+      [participantId, pool.id, g, predTop2[0] || null, predTop2[1] || null, pts]);
+  }
+
+  let thirdPts = 0;
+  if (realThirds) for (const t of predThirds) if (realThirds.includes(t)) thirdPts += pool.pts_advance;
+  await run(`INSERT INTO qualifiers (participant_id, pool_id, group_label, team_first, team_second, points)
+    VALUES ($1, $2, $3, NULL, NULL, $4)
+    ON CONFLICT (participant_id, group_label)
+    DO UPDATE SET points = excluded.points`,
+    [participantId, pool.id, THIRDS_KEY, thirdPts]);
+}
+
+// Recalcula "quem avança" para todos os palpiteiros do bolão (ao lançar resultado).
+export async function recomputeAdvanceAll(poolId) {
+  const pool = await get('SELECT * FROM pools WHERE id = $1', [poolId]);
+  const parts = await all('SELECT id FROM participants WHERE pool_id = $1', [poolId]);
+  for (const p of parts) await recomputeAdvanceForParticipant(pool, p.id);
 }
 
 export { USE_PG };

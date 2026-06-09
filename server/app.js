@@ -4,9 +4,25 @@ import { fileURLToPath } from 'node:url';
 import {
   all, get, run, ensureSchema, USE_PG,
   createPool, genToken, hashPin,
-  recomputeMatch, recomputeQualifiers, computeGroupTop2,
+  recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant,
 } from './store.js';
-import { GROUPS, FLAGS, STAGE_NAMES } from '../data/wc2026.js';
+import { syncPool, maybeSync, SYNC_ENABLED } from './sync.js';
+import { GROUPS, FLAGS, CODES, STAGE_NAMES } from '../data/wc2026.js';
+
+// Ordem das fases e regra de liberação: uma fase só abre para palpites quando a
+// anterior terminou por completo (16-avos só após a fase de grupos, etc.).
+const STAGE_ORDER = ['group', 'r32', 'r16', 'qf', 'sf', 'third', 'final'];
+function stageLocks(matches) {
+  const allFinished = (stage) => {
+    const list = matches.filter((m) => m.stage === stage);
+    return list.length > 0 && list.every((m) => m.finished);
+  };
+  // Pré-requisito de cada fase (a anterior precisa estar encerrada).
+  const prereq = { r32: 'group', r16: 'r32', qf: 'r16', sf: 'qf', third: 'sf', final: 'sf' };
+  const locks = {};
+  for (const [stage, dep] of Object.entries(prereq)) locks[stage] = !allFinished(dep);
+  return locks;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -84,7 +100,10 @@ function matchPublic(m) {
 
 // ---------- meta ----------
 app.get('/api/meta', (req, res) => {
-  res.json({ groups: GROUPS, flags: FLAGS, stageNames: STAGE_NAMES });
+  res.json({
+    groups: GROUPS, flags: FLAGS, codes: CODES, stageNames: STAGE_NAMES,
+    stageOrder: STAGE_ORDER, syncEnabled: SYNC_ENABLED,
+  });
 });
 
 // ---------- pools ----------
@@ -98,6 +117,7 @@ app.post('/api/pools', wrap(async (req, res) => {
 
 app.get('/api/pools/:slug', wrap(async (req, res) => {
   const pool = await getPool(req, res); if (!pool) return;
+  await maybeSync(pool); // atualiza placares ao vivo (se FOOTBALL_DATA_TOKEN estiver setado)
   const matches = await all('SELECT * FROM matches WHERE pool_id = $1 ORDER BY ord', [pool.id]);
   const parts = await all('SELECT name FROM participants WHERE pool_id = $1 ORDER BY name', [pool.id]);
   res.json({
@@ -105,6 +125,8 @@ app.get('/api/pools/:slug', wrap(async (req, res) => {
     isAdmin: isAdmin(req, pool),
     matches: matches.map(matchPublic),
     participants: parts.map((p) => p.name),
+    stageLocks: stageLocks(matches),
+    syncEnabled: SYNC_ENABLED,
   });
 }));
 
@@ -153,15 +175,16 @@ app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
   if (!me) return res.status(401).json({ error: 'Sessão inválida. Entre novamente.' });
 
   const predictions = Array.isArray(req.body?.predictions) ? req.body.predictions : [];
-  const qualifiers = Array.isArray(req.body?.qualifiers) ? req.body.qualifiers : [];
 
   const matchRows = await all('SELECT * FROM matches WHERE pool_id = $1', [pool.id]);
   const matchById = new Map(matchRows.map((m) => [m.id, m]));
+  const locks = stageLocks(matchRows);
 
   let saved = 0, skipped = 0;
   for (const p of predictions) {
     const m = matchById.get(Number(p.matchId));
     if (!m || m.home_team == null || m.away_team == null) { skipped++; continue; }
+    if (locks[m.stage]) { skipped++; continue; } // fase ainda não liberada
     const locked = m.finished || (pool.lock_at_kickoff && new Date(m.kickoff).getTime() <= Date.now());
     if (locked) { skipped++; continue; }
     const h = Math.max(0, Math.min(99, parseInt(p.home, 10)));
@@ -176,19 +199,8 @@ app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
     saved++;
   }
 
-  for (const q of qualifiers) {
-    if (!GROUPS[q.group]) continue;
-    const top2 = await computeGroupTop2(pool.id, q.group);
-    if (top2) continue; // grupo encerrado: trava
-    const valid = (t) => t == null || GROUPS[q.group].includes(t);
-    if (!valid(q.first) || !valid(q.second)) continue;
-    await run(`INSERT INTO qualifiers (participant_id, pool_id, group_label, team_first, team_second)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (participant_id, group_label)
-      DO UPDATE SET team_first = excluded.team_first, team_second = excluded.team_second`,
-      [me.id, pool.id, q.group, q.first || null, q.second || null]);
-    saved++;
-  }
+  // "Quem avança" é derivado dos placares de grupo do palpiteiro (top 2 + 8 melhores 3ºs).
+  await recomputeAdvanceForParticipant(pool, me.id);
 
   res.json({ saved, skipped });
 }));
@@ -206,6 +218,7 @@ function scoreFor(pool, ph, pa, m) {
 // ---------- leaderboard ----------
 app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
   const pool = await getPool(req, res); if (!pool) return;
+  await maybeSync(pool);
   const rows = await all(`
     SELECT pa.name,
       COALESCE((SELECT SUM(points) FROM predictions WHERE participant_id = pa.id), 0) AS match_pts,
@@ -271,7 +284,7 @@ app.put('/api/pools/:slug/matches/:id', wrap(async (req, res) => {
   }
   if (touchedResult) {
     await recomputeMatch(m.id);
-    if (m.group_label) await recomputeQualifiers(pool.id, m.group_label);
+    if (m.group_label) await recomputeAdvanceAll(pool.id);
   }
   const updated = await get('SELECT * FROM matches WHERE id = $1', [m.id]);
   res.json({ match: matchPublic(updated) });
@@ -291,12 +304,19 @@ app.put('/api/pools/:slug/settings', wrap(async (req, res) => {
   await run(`UPDATE pools SET pts_exact=$1, pts_goaldiff=$2, pts_outcome=$3, pts_advance=$4, lock_at_kickoff=$5 WHERE id=$6`,
     [f.pts_exact, f.pts_goaldiff, f.pts_outcome, f.pts_advance, f.lock_at_kickoff, pool.id]);
 
-  const finished = await all('SELECT id, group_label FROM matches WHERE pool_id = $1 AND finished = 1', [pool.id]);
+  const finished = await all('SELECT id FROM matches WHERE pool_id = $1 AND finished = 1', [pool.id]);
   for (const m of finished) await recomputeMatch(m.id);
-  const groups = new Set(finished.map((m) => m.group_label).filter(Boolean));
-  for (const g of groups) await recomputeQualifiers(pool.id, g);
+  await recomputeAdvanceAll(pool.id);
 
   res.json({ ok: true });
+}));
+
+// Sincroniza placares reais agora (admin). Funciona se FOOTBALL_DATA_TOKEN estiver setado.
+app.post('/api/pools/:slug/sync', wrap(async (req, res) => {
+  const pool = await requireAdmin(req, res); if (!pool) return;
+  if (!SYNC_ENABLED) return res.status(400).json({ error: 'Auto-update desligado: defina FOOTBALL_DATA_TOKEN na Vercel.' });
+  const r = await syncPool(pool, { force: true });
+  res.json(r);
 }));
 
 // ---------- static + SPA fallback ----------

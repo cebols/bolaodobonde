@@ -10,8 +10,15 @@ Já vem com **as 48 seleções e os 12 grupos reais** do sorteio de 05/12/2025 e
 
 - **Criar quantos bolões quiser** — cada um com seu link e seu admin.
 - **Palpitar o placar exato** de todos os jogos (trava no horário de início).
-- **Quem avança**: apostar os 2 classificados de cada grupo.
-- **Ranking ao vivo** que recalcula sozinho a cada resultado lançado.
+- **Quem avança é derivado dos seus placares**: a classificação de cada grupo (top 2)
+  e os **8 melhores 3ºs colocados** (formato novo da Copa de 48) se atualizam ao vivo
+  conforme você digita os placares — sem dropdown.
+- **Mata-mata liberado por rodada**: 16-avos só abrem para palpite depois da fase de
+  grupos, oitavas depois dos 16-avos, e assim por diante.
+- **Login persistente**: neste aparelho você fica logado e volta direto pro seu bolão.
+- **Resultados automáticos** (opcional): com a env var `FOOTBALL_DATA_TOKEN`, os placares
+  se atualizam sozinhos (inclusive ao vivo) via football-data.org e o ranking recalcula.
+- **Ranking ao vivo** que recalcula sozinho a cada resultado.
 - **Pontuação configurável** pelo admin:
   - 🎯 Placar exato (padrão **10**)
   - ↔️ Acertou o vencedor **e** o saldo de gols (padrão **7**)
@@ -46,6 +53,8 @@ então vários grupos de amigos usam a mesma instância sem se misturar.
 | Variável | Padrão | Descrição |
 |----------|--------|-----------|
 | `DATABASE_URL` | _(vazio)_ | String de conexão Postgres (ex.: Supabase). Se definida, usa Postgres; senão, SQLite. |
+| `FOOTBALL_DATA_TOKEN` | _(vazio)_ | Chave grátis de <https://football-data.org>. Se definida, liga os resultados automáticos (a cada acesso, no máx. 1x/min). |
+| `FOOTBALL_DATA_COMP` | `WC` | Código da competição no football-data.org (a Copa é `WC`). |
 | `PORT`   | `3000` | Porta do servidor (ignorado na Vercel) |
 | `DB_PATH`| `./bolao.db` | Caminho do arquivo SQLite (modo local) |
 

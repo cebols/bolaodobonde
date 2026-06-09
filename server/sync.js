@@ -1,0 +1,113 @@
+// Sincronização automática de resultados via football-data.org.
+// Requer a env var FOOTBALL_DATA_TOKEN (chave gratuita de https://football-data.org).
+// É best-effort: se a API falhar ou um jogo não casar, o app segue normal e o
+// admin pode lançar/ajustar o placar na mão.
+import { all, get, run, recomputeMatch, recomputeAdvanceAll } from './store.js';
+import { EN_TO_PT, STAGE_NAMES } from '../data/wc2026.js';
+
+const TOKEN = process.env.FOOTBALL_DATA_TOKEN || '';
+const COMP = process.env.FOOTBALL_DATA_COMP || 'WC'; // código da competição (Copa)
+const UPSTREAM_TTL = 60 * 1000;  // 1 req/min no máx. (respeita o free tier)
+const POOL_TTL = 45 * 1000;      // reaplica num bolão no máx. a cada 45s
+
+export const SYNC_ENABLED = !!TOKEN;
+
+const FD_STAGE = {
+  GROUP_STAGE: 'group', LAST_32: 'r32', ROUND_OF_32: 'r32',
+  LAST_16: 'r16', ROUND_OF_16: 'r16', QUARTER_FINALS: 'qf', QUARTER_FINAL: 'qf',
+  SEMI_FINALS: 'sf', SEMI_FINAL: 'sf', THIRD_PLACE: 'third', FINAL: 'final',
+};
+
+const norm = (s) => String(s || '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/[^a-z ]/g, '').trim();
+
+function toPt(name) {
+  if (!name) return null;
+  const n = norm(name);
+  if (EN_TO_PT[n]) return EN_TO_PT[n];
+  // tenta sem sufixos comuns ("korea republic" -> "korea")
+  return EN_TO_PT[n] || null;
+}
+
+// ---- cache da resposta do upstream (compartilhado entre todos os bolões) ----
+let upstreamCache = { at: 0, data: null };
+async function fetchUpstream() {
+  if (Date.now() - upstreamCache.at < UPSTREAM_TTL && upstreamCache.data) return upstreamCache.data;
+  const res = await fetch(`https://api.football-data.org/v4/competitions/${COMP}/matches`, {
+    headers: { 'X-Auth-Token': TOKEN },
+  });
+  if (!res.ok) throw new Error(`football-data ${res.status}`);
+  const json = await res.json();
+  const list = Array.isArray(json.matches) ? json.matches : [];
+  upstreamCache = { at: Date.now(), data: list };
+  return list;
+}
+
+// Casa um jogo do upstream com um jogo do bolão (por grupo+par de times, ou par de times no mata-mata).
+function findMatch(rows, fd) {
+  const stage = FD_STAGE[fd.stage] || null;
+  const home = toPt(fd.homeTeam?.name || fd.homeTeam?.shortName);
+  const away = toPt(fd.awayTeam?.name || fd.awayTeam?.shortName);
+  if (!home || !away) return null;
+  const pair = new Set([home, away]);
+  return rows.find((m) => {
+    if (stage && m.stage !== stage) return false;
+    if (!m.home_team || !m.away_team) return false;
+    return pair.has(m.home_team) && pair.has(m.away_team) && m.home_team !== m.away_team;
+  }) || null;
+}
+
+function scoreOf(fd) {
+  const ft = fd.score?.fullTime || {};
+  const h = ft.home, a = ft.away;
+  if (h == null || a == null) return null;
+  return { h, a, finished: fd.status === 'FINISHED' || fd.status === 'AWARDED' };
+}
+
+// Sincroniza UM bolão. Atualiza placares, recalcula pontos e "quem avança".
+// Retorna o nº de jogos atualizados. Nunca lança (engole erros de rede/parse).
+export async function syncPool(pool, { force = false } = {}) {
+  if (!SYNC_ENABLED) return { updated: 0, skipped: 'sem token' };
+  if (!force && pool.synced_at && Date.now() - new Date(pool.synced_at).getTime() < POOL_TTL) {
+    return { updated: 0, skipped: 'recente' };
+  }
+  let list;
+  try { list = await fetchUpstream(); }
+  catch (e) { return { updated: 0, error: String(e.message || e) }; }
+
+  const rows = await all('SELECT * FROM matches WHERE pool_id = $1', [pool.id]);
+  const touchedGroups = new Set();
+  let updated = 0;
+
+  for (const fd of list) {
+    const sc = scoreOf(fd);
+    if (!sc) continue;
+    const m = findMatch(rows, fd);
+    if (!m) continue;
+    const fin = sc.finished ? 1 : 0;
+    if (m.home_score === sc.h && m.away_score === sc.a && (m.finished ? 1 : 0) === fin) continue;
+    await run('UPDATE matches SET home_score = $1, away_score = $2, finished = $3 WHERE id = $4',
+      [sc.h, sc.a, fin, m.id]);
+    await recomputeMatch(m.id);
+    if (m.group_label) touchedGroups.add(m.group_label);
+    updated++;
+  }
+
+  if (touchedGroups.size) await recomputeAdvanceAll(pool.id);
+  await run('UPDATE pools SET synced_at = $1 WHERE id = $2', [new Date().toISOString(), pool.id]);
+  return { updated };
+}
+
+// Atalho usado nos GETs: tenta sincronizar sem travar a resposta por muito tempo.
+export async function maybeSync(pool) {
+  if (!SYNC_ENABLED) return;
+  try {
+    await Promise.race([
+      syncPool(pool),
+      new Promise((resolve) => setTimeout(resolve, 4000)), // teto de 4s
+    ]);
+  } catch (_) { /* best-effort */ }
+}
+
+export { STAGE_NAMES };

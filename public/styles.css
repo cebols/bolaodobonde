@@ -111,7 +111,12 @@ button:active { transform: translateY(1px); }
 .match.locked { background: #f7f9f7; opacity: 0.95; }
 .match .team { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; font-size: 0.95rem; }
 .match .team.away { justify-content: flex-end; text-align: right; }
-.match .team .flag { font-size: 1.3rem; }
+/* bandeiras em imagem (flagcdn) */
+.flag {
+  width: 22px; height: 16px; object-fit: cover; border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08); vertical-align: middle; flex: 0 0 auto;
+}
+.flag-ph { display: inline-block; background: repeating-linear-gradient(45deg,#ddd,#ddd 3px,#eee 3px,#eee 6px); }
 .match .scorebox { display: flex; align-items: center; gap: 0.3rem; }
 .match .scorebox input { width: 46px; text-align: center; padding: 0.4rem; -moz-appearance: textfield; }
 .match .scorebox input::-webkit-outer-spin-button,
@@ -127,11 +132,41 @@ button:active { transform: translateY(1px); }
 
 .tbd-team { color: var(--muted); font-style: italic; font-weight: 500; }
 
-/* ---------- qualifiers ---------- */
-.qual-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.7rem; }
-.qual-card { border: 1px solid var(--line); border-radius: 12px; padding: 0.7rem; }
-.qual-card h4 { margin: 0 0 0.5rem; }
-.qual-card select { margin-bottom: 0.4rem; }
+/* ---------- fase de grupos: cards + classificação ---------- */
+.hint { margin: -0.2rem 0 0.8rem; }
+.group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0.9rem; }
+.group-card { margin-bottom: 0; padding: 0.9rem; }
+.group-card h3 { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+.group-card .gmatches { margin-top: 0.6rem; }
+.group-card .match { padding: 0.45rem 0.5rem; }
+.group-card .match .team { font-size: 0.85rem; }
+
+table.stand { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+table.stand td { padding: 0.28rem 0.35rem; border-bottom: 1px solid var(--line); }
+table.stand td.pos { width: 1.4rem; text-align: center; color: var(--muted); font-weight: 700; }
+table.stand td.tm { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+table.stand td.n { text-align: center; width: 2.2rem; }
+table.stand tr.q1 td.pos { color: var(--green); }
+table.stand tr.q1 { background: #eafaf0; }
+table.stand tr.q3 { background: #fff7df; }
+table.stand tr.q3 td.pos { color: #b58900; }
+
+/* ---------- melhores 3ºs ---------- */
+.thirds { display: flex; flex-direction: column; gap: 0.3rem; }
+.third-row {
+  display: grid; grid-template-columns: 1.6rem 1fr auto auto; align-items: center; gap: 0.5rem;
+  padding: 0.35rem 0.5rem; border: 1px solid var(--line); border-radius: 10px; font-size: 0.85rem;
+}
+.third-row .pos { text-align: center; font-weight: 700; color: var(--muted); }
+.third-row .tm { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+.third-row .tm small { color: var(--muted); font-weight: 500; }
+.third-row .n { color: var(--muted); font-size: 0.78rem; }
+.third-row .qbadge { font-size: 0.75rem; font-weight: 700; }
+.third-row.in { background: #eafaf0; border-color: #bfe6cd; }
+.third-row.in .qbadge { color: var(--green-dark); }
+.third-row.out { opacity: 0.7; }
+
+.locked-stage { background: #f7f9f7; color: var(--muted); text-align: center; font-size: 0.9rem; }
 
 /* ---------- leaderboard ---------- */
 table.board { width: 100%; border-collapse: collapse; }

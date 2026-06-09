@@ -2,7 +2,7 @@
 
 // ---------------- estado & util ----------------
 const App = (location.hostname && location.host) ? location.origin : '';
-let META = { groups: {}, flags: {}, stageNames: {} };
+let META = { groups: {}, flags: {}, codes: {}, stageNames: {}, stageOrder: [], syncEnabled: false };
 
 const store = {
   getAdmin: (slug) => JSON.parse(localStorage.getItem('bolao_admin') || '{}')[slug] || null,
@@ -19,6 +19,10 @@ const store = {
     const m = JSON.parse(localStorage.getItem('bolao_part') || '{}');
     delete m[slug]; localStorage.setItem('bolao_part', JSON.stringify(m));
   },
+  // "casa" do dispositivo: último bolão em que o usuário entrou (login persistente).
+  getHome: () => localStorage.getItem('bolao_home') || null,
+  setHome: (slug) => localStorage.setItem('bolao_home', slug),
+  clearHome: () => localStorage.removeItem('bolao_home'),
   recent: () => JSON.parse(localStorage.getItem('bolao_recent') || '[]'),
   addRecent: (slug, name) => {
     let r = store.recent().filter((x) => x.slug !== slug);
@@ -30,7 +34,15 @@ const store = {
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const flag = (t) => (t && META.flags[t]) ? META.flags[t] : '⚪';
+
+// Bandeira como IMAGEM (emoji de bandeira não renderiza no Windows).
+function flag(t) {
+  const code = t && META.codes && META.codes[t];
+  if (!code) return '<span class="flag flag-ph" aria-hidden="true"></span>';
+  return `<img class="flag" loading="lazy" alt="" src="https://flagcdn.com/${code}.svg" />`;
+}
+// Emoji (usado só dentro de <option>, onde imagem não vale).
+const flagEmoji = (t) => (t && META.flags[t]) ? META.flags[t] : '⚪';
 
 function toast(msg, isErr = false) {
   const t = $('#toast');
@@ -59,10 +71,35 @@ function dayKey(iso) {
   return new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
 }
 
+// ---------------- classificação (espelho do servidor) ----------------
+function groupTableJS(teams, games) {
+  const table = {};
+  for (const t of teams) table[t] = { team: t, j: 0, pts: 0, gf: 0, ga: 0 };
+  for (const m of games) {
+    if (m.home_score == null || m.away_score == null) continue;
+    const h = table[m.home_team], a = table[m.away_team];
+    if (!h || !a) continue;
+    h.j++; a.j++;
+    h.gf += m.home_score; h.ga += m.away_score;
+    a.gf += m.away_score; a.ga += m.home_score;
+    if (m.home_score > m.away_score) h.pts += 3;
+    else if (m.home_score < m.away_score) a.pts += 3;
+    else { h.pts += 1; a.pts += 1; }
+  }
+  return Object.values(table)
+    .map((r) => ({ ...r, gd: r.gf - r.ga }))
+    .sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || x.team.localeCompare(y.team));
+}
+
 // ---------------- router ----------------
 window.addEventListener('hashchange', route);
 window.addEventListener('DOMContentLoaded', async () => {
   try { META = await api('GET', '/api/meta'); } catch (_) {}
+  // Login persistente: sem rota explícita, volta direto pro bolão "casa" se ainda logado.
+  if (!location.hash) {
+    const home = store.getHome();
+    if (home && store.getPart(home)) { location.hash = `#/p/${encodeURIComponent(home)}`; return; }
+  }
   route();
 });
 
@@ -85,13 +122,13 @@ function renderHome() {
       <p>Crie um bolão, mande o link pra galera e dispute palpite a palpite até a final.</p>
       <div class="feats">
         <span>🎯 Placar exato</span><span>📊 Ranking ao vivo</span>
-        <span>🏆 Quem avança</span><span>🔗 Link pra compartilhar</span>
+        <span>🏆 Quem avança</span><span>🔄 Resultados automáticos</span>
       </div>
     </section>
 
     <section class="card">
       <h2>Criar um novo bolão</h2>
-      <p class="muted">Você vira o admin: define a pontuação e lança os resultados.</p>
+      <p class="muted">Você vira o admin: define a pontuação e acompanha os resultados.</p>
       <div class="spacer"></div>
       <div class="field">
         <label for="pool-name">Nome do bolão</label>
@@ -139,7 +176,7 @@ function renderHome() {
 }
 
 // ---------------- POOL ----------------
-const PoolState = { slug: null, data: null, me: null, tab: 'palpites', draft: {}, qdraft: {}, admin: null };
+const PoolState = { slug: null, data: null, me: null, tab: 'palpites', draft: {}, qsaved: {}, admin: null };
 
 async function renderPool(slug) {
   PoolState.slug = slug;
@@ -174,11 +211,11 @@ function drawPoolShell() {
   $('#app').innerHTML = `
     <section class="card hero">
       <h1>${esc(data.pool.name)}</h1>
-      <p>${data.participants.length} participante(s) · ${data.matches.length} jogos</p>
+      <p>${data.participants.length} participante(s) · ${data.matches.length} jogos${data.syncEnabled ? ' · 🔄 resultados automáticos' : ''}</p>
       <div class="scoring-legend">
         <span>🎯 Placar exato: <b>${data.pool.scoring.pts_exact}</b></span>
         <span>↔️ Resultado + saldo: <b>${data.pool.scoring.pts_goaldiff}</b></span>
-        <span>✅ Acertou o vencedor: <b>${data.pool.scoring.pts_outcome}</b></span>
+        <span>✅ Acertou o vencedor/empate: <b>${data.pool.scoring.pts_outcome}</b></span>
         <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
       </div>
     </section>
@@ -197,6 +234,56 @@ function drawPoolShell() {
 }
 
 // ---------- aba: palpites ----------
+const PREREQ_NAME = { r32: 'Fase de Grupos', r16: '16-avos', qf: 'Oitavas', sf: 'Quartas', third: 'Semifinais', final: 'Semifinais' };
+
+// Jogos de um grupo com os placares atuais do rascunho (para a classificação ao vivo).
+function draftGroupGames(g) {
+  return PoolState.data.matches
+    .filter((m) => m.stage === 'group' && m.group_label === g)
+    .map((m) => {
+      const d = PoolState.draft[m.id] || {};
+      const h = (d.home === '' || d.home == null) ? null : Number(d.home);
+      const a = (d.away === '' || d.away == null) ? null : Number(d.away);
+      return { home_team: m.home_team, away_team: m.away_team, home_score: h, away_score: a };
+    });
+}
+
+function standHtml(g) {
+  const t = groupTableJS(META.groups[g], draftGroupGames(g));
+  return `<table class="stand"><tbody>
+    ${t.map((r, i) => `<tr class="${i < 2 ? 'q1' : i === 2 ? 'q3' : 'qx'}">
+      <td class="pos">${i + 1}</td>
+      <td class="tm">${flag(r.team)}<span>${esc(r.team)}</span></td>
+      <td class="n">${r.j}</td>
+      <td class="n">${r.gd > 0 ? '+' : ''}${r.gd}</td>
+      <td class="n"><b>${r.pts}</b></td>
+    </tr>`).join('')}
+  </tbody></table>`;
+}
+
+function thirdsRows() {
+  const rows = Object.keys(META.groups).map((g) => {
+    const t = groupTableJS(META.groups[g], draftGroupGames(g));
+    return { ...t[2], group: g };
+  });
+  return rows.sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || x.team.localeCompare(y.team));
+}
+function thirdsHtml() {
+  return thirdsRows().map((r, i) => `<div class="third-row ${i < 8 ? 'in' : 'out'}">
+    <span class="pos">${i + 1}</span>
+    <span class="tm">${flag(r.team)}<span>${esc(r.team)}</span> <small>Grupo ${r.group}</small></span>
+    <span class="n">${r.pts} pts · ${r.gd > 0 ? '+' : ''}${r.gd}</span>
+    <span class="qbadge">${i < 8 ? '✅ passa' : '—'}</span>
+  </div>`).join('');
+}
+
+function refreshGroup(g) {
+  const el = $(`#stand-${g}`);
+  if (el) el.innerHTML = standHtml(g);
+  const th = $('#thirds-list');
+  if (th) th.innerHTML = thirdsHtml();
+}
+
 async function renderPalpites() {
   const view = $('#tabview');
   if (!PoolState.me) return renderAuth(view);
@@ -210,14 +297,14 @@ async function renderPalpites() {
     return renderAuth(view, e.message);
   }
 
-  // monta drafts a partir do salvo
   PoolState.draft = {};
   mine.predictions.forEach((p) => { PoolState.draft[p.match_id] = { home: p.home_score, away: p.away_score, points: p.points }; });
-  PoolState.qdraft = {};
-  mine.qualifiers.forEach((q) => { PoolState.qdraft[q.group_label] = { first: q.team_first, second: q.team_second, points: q.points }; });
+  PoolState.qsaved = {};
+  mine.qualifiers.forEach((q) => { PoolState.qsaved[q.group_label] = q; });
 
   const matches = PoolState.data.matches;
-  const stages = ['group', 'r32', 'r16', 'qf', 'sf', 'third', 'final'];
+  const locks = PoolState.data.stageLocks || {};
+  const matchById = new Map(matches.map((m) => [m.id, m]));
 
   let html = `
     <div class="card">
@@ -227,29 +314,40 @@ async function renderPalpites() {
       </div>
     </div>`;
 
-  // Quem avança (palpite por grupo)
-  html += `<div class="card"><h3>🏆 Quem avança (top 2 de cada grupo)</h3>
-    <p class="muted">Vale <b>${PoolState.data.pool.scoring.pts_advance} pts</b> por seleção que realmente passar. Trava quando o grupo termina.</p>
-    <div class="spacer"></div><div class="qual-grid">`;
+  // ---- Fase de grupos: 12 cards com classificação ao vivo + jogos ----
+  html += `<h2 class="stage-title">${esc(META.stageNames.group || 'Fase de Grupos')}</h2>
+    <p class="muted hint">Coloque os placares: a classificação de cada grupo se atualiza na hora. Os 2 primeiros + os 8 melhores 3ºs vão pro mata-mata. Vale <b>${PoolState.data.pool.scoring.pts_advance} pts</b> por seleção que você acertar.</p>
+    <div class="group-grid">`;
   for (const g of Object.keys(META.groups)) {
-    const teams = META.groups[g];
-    const q = PoolState.qdraft[g] || {};
-    const groupDone = teams.length && matches.filter((m) => m.group_label === g).every((m) => m.finished) && matches.some((m) => m.group_label === g);
-    const opt = (sel) => ['<option value="">—</option>'].concat(
-      teams.map((t) => `<option value="${esc(t)}" ${sel === t ? 'selected' : ''}>${flag(t)} ${esc(t)}</option>`)).join('');
-    html += `<div class="qual-card">
-      <h4>Grupo ${g} ${q.points ? `<span class="pill pts">+${q.points}</span>` : ''}</h4>
-      <select data-qual="${g}" data-pos="first" ${groupDone ? 'disabled' : ''}>${opt(q.first)}</select>
-      <select data-qual="${g}" data-pos="second" ${groupDone ? 'disabled' : ''}>${opt(q.second)}</select>
+    const q = PoolState.qsaved[g];
+    const badge = q && q.points ? `<span class="pill pts">+${q.points}</span>` : '';
+    html += `<div class="card group-card">
+      <h3>Grupo ${g} ${badge}</h3>
+      <div class="stand-wrap" id="stand-${g}">${standHtml(g)}</div>
+      <div class="gmatches">
+        ${matches.filter((m) => m.stage === 'group' && m.group_label === g).map(matchRow).join('')}
+      </div>
     </div>`;
   }
-  html += `</div></div>`;
+  html += `</div>`;
 
-  // Jogos por fase
-  for (const stage of stages) {
+  // ---- Melhores 3ºs colocados (ao vivo) ----
+  const t3 = PoolState.qsaved['__3__'];
+  html += `<div class="card">
+    <h3>🥉 Melhores 3ºs colocados ${t3 && t3.points ? `<span class="pill pts">+${t3.points}</span>` : ''}</h3>
+    <p class="muted">Os <b>8 melhores</b> terceiros (entre os 12 grupos) também se classificam. Ajuste os placares e veja quem entra.</p>
+    <div class="thirds" id="thirds-list">${thirdsHtml()}</div>
+  </div>`;
+
+  // ---- Mata-mata (travado por fase) ----
+  for (const stage of ['r32', 'r16', 'qf', 'sf', 'third', 'final']) {
     const list = matches.filter((m) => m.stage === stage);
     if (!list.length) continue;
     html += `<h2 class="stage-title">${esc(META.stageNames[stage] || stage)}</h2>`;
+    if (locks[stage]) {
+      html += `<div class="card locked-stage">🔒 Libera para palpites quando <b>${PREREQ_NAME[stage] || 'a fase anterior'}</b> terminar.</div>`;
+      continue;
+    }
     let lastDay = '';
     for (const m of list) {
       const dk = dayKey(m.kickoff);
@@ -265,20 +363,19 @@ async function renderPalpites() {
 
   view.innerHTML = html;
 
-  $('#btn-logout').onclick = () => { store.clearPart(PoolState.slug); PoolState.me = null; drawPoolShell(); };
+  $('#btn-logout').onclick = () => {
+    store.clearPart(PoolState.slug);
+    if (store.getHome() === PoolState.slug) store.clearHome();
+    PoolState.me = null; drawPoolShell();
+  };
 
-  view.querySelectorAll('select[data-qual]').forEach((sel) => {
-    sel.onchange = () => {
-      const g = sel.dataset.qual, pos = sel.dataset.pos;
-      PoolState.qdraft[g] = PoolState.qdraft[g] || {};
-      PoolState.qdraft[g][pos] = sel.value || null;
-    };
-  });
   view.querySelectorAll('input[data-match]').forEach((inp) => {
     inp.oninput = () => {
       const id = inp.dataset.match, side = inp.dataset.side;
       PoolState.draft[id] = PoolState.draft[id] || {};
       PoolState.draft[id][side] = inp.value === '' ? '' : Math.max(0, Math.min(99, parseInt(inp.value, 10) || 0));
+      const m = matchById.get(Number(id));
+      if (m && m.stage === 'group') refreshGroup(m.group_label);
     };
   });
 
@@ -308,8 +405,12 @@ function matchRow(m) {
 
   let chip = '';
   if (m.finished) chip = `<span class="result-chip">Final: ${m.home_score} x ${m.away_score}</span>`;
-  else if (m.locked && !tbdH && !tbdA) chip = `<span class="pill live">⏱ em jogo/encerrado</span>`;
-  const ptsPill = (m.finished && d.points != null) ? `<span class="pill ${d.points ? 'pts' : ''}">${d.points} pts</span>` : '';
+  else if (m.locked && !tbdH && !tbdA) {
+    chip = (m.home_score != null && m.away_score != null)
+      ? `<span class="pill live">🔴 ao vivo: ${m.home_score} x ${m.away_score}</span>`
+      : `<span class="pill live">⏱ em jogo/encerrado</span>`;
+  }
+  const ptsPill = (d.points != null && (m.finished || m.home_score != null)) ? `<span class="pill ${d.points ? 'pts' : ''}">${d.points} pts</span>` : '';
 
   return `<div class="match ${locked ? 'locked' : ''}">
     <div class="team home">${homeName}</div>
@@ -323,11 +424,9 @@ async function savePredictions() {
   const predictions = Object.entries(PoolState.draft)
     .filter(([, v]) => v.home !== '' && v.away !== '' && v.home != null && v.away != null)
     .map(([matchId, v]) => ({ matchId: Number(matchId), home: v.home, away: v.away }));
-  const qualifiers = Object.entries(PoolState.qdraft)
-    .map(([group, v]) => ({ group, first: v.first || null, second: v.second || null }));
   try {
     const r = await api('PUT', `/api/pools/${PoolState.slug}/predictions`,
-      { predictions, qualifiers }, { 'x-participant-token': PoolState.me.token });
+      { predictions }, { 'x-participant-token': PoolState.me.token });
     toast(`✅ Salvo! ${r.saved} palpite(s).${r.skipped ? ` ${r.skipped} travado(s)/ignorado(s).` : ''}`);
     renderPalpites();
   } catch (e) { toast(e.message, true); }
@@ -339,7 +438,7 @@ function renderAuth(view, errMsg = '') {
     <div class="card">
       <h3>Entrar no bolão</h3>
       ${errMsg ? `<p class="muted" style="color:var(--danger)">${esc(errMsg)}</p>` : ''}
-      <p class="muted">Escolha um nome e um PIN. Use o mesmo PIN para voltar e editar seus palpites.</p>
+      <p class="muted">Escolha um nome e um PIN. Use o mesmo PIN para voltar e editar seus palpites. Neste aparelho você fica logado.</p>
       <div class="spacer"></div>
       <div class="field"><label>Seu nome</label><input id="a-name" type="text" maxlength="30" placeholder="Como você aparece no ranking" /></div>
       <div class="field"><label>PIN (mín. 3 dígitos)</label><input id="a-pin" type="password" placeholder="Senha curta só sua" /></div>
@@ -354,6 +453,7 @@ function renderAuth(view, errMsg = '') {
     try {
       const r = await api('POST', `/api/pools/${PoolState.slug}/${endpoint}`, { name, pin });
       store.setPart(PoolState.slug, { token: r.token, name: r.name });
+      store.setHome(PoolState.slug); // login persistente: este vira o bolão "casa"
       PoolState.me = { token: r.token, name: r.name };
       toast(`Bem-vindo(a), ${r.name}! ⚽`);
       renderPalpites();
@@ -421,13 +521,21 @@ async function renderAdmin() {
     </div>
 
     <div class="card">
+      <h3>🔄 Resultados automáticos</h3>
+      ${PoolState.data.syncEnabled
+        ? `<p class="muted">Ligado. Os placares se atualizam sozinhos (a cada acesso, no máx. 1x/min). Force agora se quiser:</p>
+           <button id="btn-sync" class="btn-soft">Sincronizar agora</button>`
+        : `<p class="muted">Desligado. Para ativar, defina a env var <b>FOOTBALL_DATA_TOKEN</b> (chave grátis de football-data.org) na Vercel e faça redeploy. Sem isso, lance os placares na mão abaixo.</p>`}
+    </div>
+
+    <div class="card">
       <h3>⚙️ Pontuação</h3>
       <div class="row">
         <div class="field"><label>🎯 Placar exato</label><input type="number" id="s-exact" value="${s.pts_exact}" min="0" max="100" /></div>
         <div class="field"><label>↔️ Resultado + saldo</label><input type="number" id="s-gd" value="${s.pts_goaldiff}" min="0" max="100" /></div>
       </div>
       <div class="row">
-        <div class="field"><label>✅ Acertou vencedor</label><input type="number" id="s-out" value="${s.pts_outcome}" min="0" max="100" /></div>
+        <div class="field"><label>✅ Acertou vencedor/empate</label><input type="number" id="s-out" value="${s.pts_outcome}" min="0" max="100" /></div>
         <div class="field"><label>🏆 Quem avança (por time)</label><input type="number" id="s-adv" value="${s.pts_advance}" min="0" max="100" /></div>
       </div>
       <label style="font-weight:500"><input type="checkbox" id="s-lock" ${data.pool.lock_at_kickoff ? 'checked' : ''} style="width:auto;margin-right:.4rem" />Travar palpites no horário de início do jogo</label>
@@ -447,6 +555,18 @@ async function renderAdmin() {
   const copy = (id) => { const el = $('#' + id); el.select(); navigator.clipboard?.writeText(el.value); toast('Copiado! 📋'); };
   $('#copy-share').onclick = () => copy('sharelink');
   $('#copy-adm').onclick = () => copy('admtok');
+
+  const syncBtn = $('#btn-sync');
+  if (syncBtn) syncBtn.onclick = async () => {
+    syncBtn.disabled = true; syncBtn.textContent = 'Sincronizando…';
+    try {
+      const r = await api('POST', `/api/pools/${PoolState.slug}/sync`, {}, { 'x-admin-token': adminToken });
+      toast(r.error ? r.error : `✅ ${r.updated || 0} jogo(s) atualizado(s).`, !!r.error);
+      PoolState.data = await api('GET', `/api/pools/${PoolState.slug}`, null, { 'x-admin-token': adminToken });
+      drawPoolShell();
+    } catch (e) { toast(e.message, true); }
+    finally { if ($('#btn-sync')) { $('#btn-sync').disabled = false; $('#btn-sync').textContent = 'Sincronizar agora'; } }
+  };
 
   $('#save-settings').onclick = async () => {
     try {
@@ -480,7 +600,7 @@ function renderAdminMatches() {
         if (!ko) return `<b>${flag(val)} ${esc(val)}</b>`;
         return `<select data-am="${m.id}" data-team="${side}">
           <option value="">— a definir —</option>
-          ${allTeams.map((t) => `<option value="${esc(t)}" ${val === t ? 'selected' : ''}>${flag(t)} ${esc(t)}</option>`).join('')}
+          ${allTeams.map((t) => `<option value="${esc(t)}" ${val === t ? 'selected' : ''}>${flagEmoji(t)} ${esc(t)}</option>`).join('')}
         </select>`;
       };
       html += `<div class="match" style="grid-template-columns:1fr;gap:.4rem">

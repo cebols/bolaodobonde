@@ -33,6 +33,44 @@ export const FLAGS = {
   'Inglaterra': '🏴󠁧󠁢󠁥󠁮󠁧󠁿', 'Croácia': '🇭🇷', 'Gana': '🇬🇭', 'Panamá': '🇵🇦',
 };
 
+// Código ISO (flagcdn) por seleção — usados para renderizar a bandeira como imagem
+// (emoji de bandeira não funciona no Windows). Sub-regiões usam o formato do flagcdn.
+export const CODES = {
+  'México': 'mx', 'África do Sul': 'za', 'Coreia do Sul': 'kr', 'Tchéquia': 'cz',
+  'Canadá': 'ca', 'Bósnia e Herzegovina': 'ba', 'Catar': 'qa', 'Suíça': 'ch',
+  'Brasil': 'br', 'Marrocos': 'ma', 'Haiti': 'ht', 'Escócia': 'gb-sct',
+  'Estados Unidos': 'us', 'Paraguai': 'py', 'Austrália': 'au', 'Turquia': 'tr',
+  'Alemanha': 'de', 'Curaçao': 'cw', 'Costa do Marfim': 'ci', 'Equador': 'ec',
+  'Holanda': 'nl', 'Japão': 'jp', 'Suécia': 'se', 'Tunísia': 'tn',
+  'Bélgica': 'be', 'Egito': 'eg', 'Irã': 'ir', 'Nova Zelândia': 'nz',
+  'Espanha': 'es', 'Cabo Verde': 'cv', 'Arábia Saudita': 'sa', 'Uruguai': 'uy',
+  'França': 'fr', 'Senegal': 'sn', 'Iraque': 'iq', 'Noruega': 'no',
+  'Argentina': 'ar', 'Argélia': 'dz', 'Áustria': 'at', 'Jordânia': 'jo',
+  'Portugal': 'pt', 'Congo (RDC)': 'cd', 'Uzbequistão': 'uz', 'Colômbia': 'co',
+  'Inglaterra': 'gb-eng', 'Croácia': 'hr', 'Gana': 'gh', 'Panamá': 'pa',
+};
+
+// Nomes em inglês (e variações comuns) -> nome interno em PT. Usado para casar os
+// jogos vindos do football-data.org com as seleções do bolão.
+export const EN_TO_PT = {
+  'mexico': 'México', 'south africa': 'África do Sul', 'south korea': 'Coreia do Sul',
+  'korea republic': 'Coreia do Sul', 'czech republic': 'Tchéquia', 'czechia': 'Tchéquia',
+  'canada': 'Canadá', 'bosnia and herzegovina': 'Bósnia e Herzegovina', 'bosnia-herzegovina': 'Bósnia e Herzegovina',
+  'qatar': 'Catar', 'switzerland': 'Suíça', 'brazil': 'Brasil', 'morocco': 'Marrocos',
+  'haiti': 'Haiti', 'scotland': 'Escócia', 'united states': 'Estados Unidos', 'usa': 'Estados Unidos',
+  'paraguay': 'Paraguai', 'australia': 'Austrália', 'turkey': 'Turquia', 'türkiye': 'Turquia', 'turkiye': 'Turquia',
+  'germany': 'Alemanha', 'curacao': 'Curaçao', 'curaçao': 'Curaçao', 'ivory coast': 'Costa do Marfim',
+  "cote d'ivoire": 'Costa do Marfim', 'côte d’ivoire': 'Costa do Marfim', 'ecuador': 'Equador',
+  'netherlands': 'Holanda', 'japan': 'Japão', 'sweden': 'Suécia', 'tunisia': 'Tunísia',
+  'belgium': 'Bélgica', 'egypt': 'Egito', 'iran': 'Irã', 'new zealand': 'Nova Zelândia',
+  'spain': 'Espanha', 'cape verde': 'Cabo Verde', 'cabo verde': 'Cabo Verde', 'saudi arabia': 'Arábia Saudita',
+  'uruguay': 'Uruguai', 'france': 'França', 'senegal': 'Senegal', 'iraq': 'Iraque', 'norway': 'Noruega',
+  'argentina': 'Argentina', 'algeria': 'Argélia', 'austria': 'Áustria', 'jordan': 'Jordânia',
+  'portugal': 'Portugal', 'dr congo': 'Congo (RDC)', 'congo dr': 'Congo (RDC)', 'democratic republic of congo': 'Congo (RDC)',
+  'uzbekistan': 'Uzbequistão', 'colombia': 'Colômbia', 'england': 'Inglaterra', 'croatia': 'Croácia',
+  'ghana': 'Gana', 'panama': 'Panamá',
+};
+
 // Ordem de uma rodada simples (single round-robin) para 4 times: índices 0..3.
 const ROUND_ROBIN = [
   [[0, 1], [2, 3]], // rodada 1
