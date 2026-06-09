@@ -6,7 +6,7 @@ import {
   createPool, genToken, hashPin,
   recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant,
 } from './store.js';
-import { syncPool, maybeSync, SYNC_ENABLED } from './sync.js';
+import { syncPool, maybeSync, SYNC_ENABLED, diagnose } from './sync.js';
 import { GROUPS, FLAGS, CODES, STAGE_NAMES, FIFA_RANK } from '../data/wc2026.js';
 
 // Ordem das fases e regra de liberação: uma fase só abre para palpites quando a
@@ -63,6 +63,11 @@ app.get('/api/_health', (req, res) => {
       res.status(500).json(info);
     });
 });
+
+// Diagnóstico do auto-update (football-data.org). Abra no navegador para validar.
+app.get('/api/_football_check', wrap(async (req, res) => {
+  res.json(await diagnose());
+}));
 
 async function getPool(req, res) {
   const pool = await get('SELECT * FROM pools WHERE slug = $1', [req.params.slug]);
@@ -203,6 +208,31 @@ app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
   await recomputeAdvanceForParticipant(pool, me.id);
 
   res.json({ saved, skipped });
+}));
+
+// Limpa palpites do participante: { group: 'A' } limpa só o grupo; sem group, limpa tudo.
+// Só remove palpites de jogos ainda não travados (não mexe em resultado já lançado).
+app.post('/api/pools/:slug/predictions/clear', wrap(async (req, res) => {
+  const pool = await getPool(req, res); if (!pool) return;
+  const me = await getParticipant(req, pool);
+  if (!me) return res.status(401).json({ error: 'Sessão inválida. Entre novamente.' });
+
+  const group = req.body?.group || null;
+  const matchRows = await all('SELECT * FROM matches WHERE pool_id = $1', [pool.id]);
+  const isLocked = (m) => m.finished || (pool.lock_at_kickoff && new Date(m.kickoff).getTime() <= Date.now());
+  const ids = matchRows
+    .filter((m) => !isLocked(m) && (!group || (m.stage === 'group' && m.group_label === group)))
+    .map((m) => m.id);
+
+  let cleared = 0;
+  if (ids.length) {
+    const ph = ids.map((_, i) => `$${i + 2}`).join(',');
+    const existing = await all(`SELECT match_id FROM predictions WHERE participant_id = $1 AND match_id IN (${ph})`, [me.id, ...ids]);
+    cleared = existing.length;
+    await run(`DELETE FROM predictions WHERE participant_id = $1 AND match_id IN (${ph})`, [me.id, ...ids]);
+  }
+  await recomputeAdvanceForParticipant(pool, me.id);
+  res.json({ cleared });
 }));
 
 // pontos de um palpite contra um resultado já lançado

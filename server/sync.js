@@ -110,4 +110,39 @@ export async function maybeSync(pool) {
   } catch (_) { /* best-effort */ }
 }
 
+// Diagnóstico (não vaza o token): testa a conexão e mostra quantos jogos vieram e
+// quantas seleções casaram com os nomes do bolão. Útil para validar antes dos jogos.
+export async function diagnose() {
+  const out = { enabled: SYNC_ENABLED, comp: COMP, tokenLen: TOKEN.length };
+  if (!SYNC_ENABLED) { out.error = 'FOOTBALL_DATA_TOKEN não definido na Vercel.'; return out; }
+  let list;
+  try { list = await fetchUpstream(); }
+  catch (e) { out.ok = false; out.error = String(e.message || e); return out; }
+
+  out.ok = true;
+  out.totalMatches = list.length;
+  out.byStatus = {};
+  out.byStage = {};
+  const matched = new Set();
+  const unmatched = new Set();
+  for (const fd of list) {
+    out.byStatus[fd.status] = (out.byStatus[fd.status] || 0) + 1;
+    out.byStage[fd.stage] = (out.byStage[fd.stage] || 0) + 1;
+    for (const side of ['homeTeam', 'awayTeam']) {
+      const name = fd[side]?.name;
+      if (!name) continue;
+      (toPt(name) ? matched : unmatched).add(name);
+    }
+  }
+  out.teamsMatched = matched.size;
+  out.teamsUnmatched = [...unmatched].sort();
+  out.sample = list.slice(0, 5).map((m) => ({
+    stage: m.stage, group: m.group, status: m.status,
+    home: m.homeTeam?.name, away: m.awayTeam?.name,
+    score: `${m.score?.fullTime?.home ?? '-'}x${m.score?.fullTime?.away ?? '-'}`,
+    pt: `${toPt(m.homeTeam?.name) || '?'} x ${toPt(m.awayTeam?.name) || '?'}`,
+  }));
+  return out;
+}
+
 export { STAGE_NAMES };

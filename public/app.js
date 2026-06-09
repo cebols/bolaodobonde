@@ -76,7 +76,7 @@ const fifaRk = (t) => (META.fifaRank && META.fifaRank[t]) || 999;
 
 function baseStatsJS(teams, games) {
   const table = {};
-  for (const t of teams) table[t] = { team: t, j: 0, pts: 0, gf: 0, ga: 0 };
+  for (const t of teams) table[t] = { team: t, j: 0, v: 0, e: 0, d: 0, pts: 0, gf: 0, ga: 0 };
   for (const m of games) {
     if (m.home_score == null || m.away_score == null) continue;
     const h = table[m.home_team], a = table[m.away_team];
@@ -84,9 +84,9 @@ function baseStatsJS(teams, games) {
     h.j++; a.j++;
     h.gf += m.home_score; h.ga += m.away_score;
     a.gf += m.away_score; a.ga += m.home_score;
-    if (m.home_score > m.away_score) h.pts += 3;
-    else if (m.home_score < m.away_score) a.pts += 3;
-    else { h.pts += 1; a.pts += 1; }
+    if (m.home_score > m.away_score) { h.pts += 3; h.v++; a.d++; }
+    else if (m.home_score < m.away_score) { a.pts += 3; a.v++; h.d++; }
+    else { h.pts += 1; a.pts += 1; h.e++; a.e++; }
   }
   for (const t of teams) table[t].gd = table[t].gf - table[t].ga;
   return table;
@@ -287,40 +287,75 @@ function draftGroupGames(g) {
     });
 }
 
-function standHtml(g) {
-  const t = groupTableJS(META.groups[g], draftGroupGames(g));
-  return `<table class="stand"><tbody>
-    ${t.map((r, i) => `<tr class="${i < 2 ? 'q1' : i === 2 ? 'q3' : 'qx'}">
-      <td class="pos">${i + 1}</td>
-      <td class="tm">${flag(r.team)}<span>${esc(r.team)}</span></td>
-      <td class="n">${r.j}</td>
-      <td class="n">${r.gd > 0 ? '+' : ''}${r.gd}</td>
-      <td class="n"><b>${r.pts}</b></td>
-    </tr>`).join('')}
-  </tbody></table>`;
+// Conjunto dos times que estão (na prévia atual) entre os 8 melhores 3ºs.
+function qualifiedThirdsSet() {
+  return new Set(thirdsRows().slice(0, 8).map((r) => r.team));
 }
 
-function thirdsRows() {
-  const rows = Object.keys(META.groups).map((g) => {
+function standHtml(g, q3) {
+  const t = groupTableJS(META.groups[g], draftGroupGames(g));
+  q3 = q3 || qualifiedThirdsSet();
+  const head = `<tr class="stand-head">
+    <td class="pos" title="Posição">#</td><td class="tm">Seleção</td>
+    <td class="n" title="Jogos">J</td><td class="n" title="Vitórias">V</td>
+    <td class="n" title="Empates">E</td><td class="n" title="Derrotas">D</td>
+    <td class="n" title="Gols pró">GP</td><td class="n" title="Gols contra">GC</td>
+    <td class="n" title="Saldo de gols">SG</td><td class="n" title="Pontos">P</td>
+  </tr>`;
+  const body = t.map((r, i) => {
+    const cls = i < 2 ? 'q1' : i === 2 ? 'q3' : 'qx';
+    return `<tr class="${cls}">
+      <td class="pos">${i + 1}</td>
+      <td class="tm">${flag(r.team)}<span>${esc(r.team)}</span></td>
+      <td class="n">${r.j}</td><td class="n">${r.v}</td><td class="n">${r.e}</td><td class="n">${r.d}</td>
+      <td class="n">${r.gf}</td><td class="n">${r.ga}</td>
+      <td class="n">${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="n"><b>${r.pts}</b></td>
+    </tr>`;
+  }).join('');
+  const third = t[2];
+  const inThird = third && q3.has(third.team);
+  const note = third ? `<div class="q3note ${inThird ? 'yes' : 'no'}">
+    🥉 3º (${esc(third.team)}): <b>${inThird ? '✅ classificado' : '❌ não classificado'}</b></div>` : '';
+  return `<table class="stand"><tbody>${head}${body}</tbody></table>${note}`;
+}
+
+// ---- prévia dos classificados (1º, 2º e 3º) ----
+function posRows(idx) {
+  return Object.keys(META.groups).map((g) => {
     const t = groupTableJS(META.groups[g], draftGroupGames(g));
-    return { ...t[2], group: g };
+    return { ...t[idx], group: g };
   });
-  return rows.sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || fifaRk(x.team) - fifaRk(y.team) || x.team.localeCompare(y.team));
+}
+function thirdsRows() {
+  return posRows(2).sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || fifaRk(x.team) - fifaRk(y.team) || x.team.localeCompare(y.team));
+}
+function posListHtml(idx) {
+  // 1º e 2º: todos classificam (lista por grupo A..L).
+  return posRows(idx).map((r) => `<div class="third-row in">
+    <span class="pos">${r.group}</span>
+    <span class="tm">${flag(r.team)}<span>${esc(r.team)}</span></span>
+    <span class="n">${r.pts} pts · ${r.gd > 0 ? '+' : ''}${r.gd}</span>
+    <span class="qbadge">✅ passa</span>
+  </div>`).join('');
 }
 function thirdsHtml() {
   return thirdsRows().map((r, i) => `<div class="third-row ${i < 8 ? 'in' : 'out'}">
     <span class="pos">${i + 1}</span>
     <span class="tm">${flag(r.team)}<span>${esc(r.team)}</span> <small>Grupo ${r.group}</small></span>
     <span class="n">${r.pts} pts · ${r.gd > 0 ? '+' : ''}${r.gd}</span>
-    <span class="qbadge">${i < 8 ? '✅ passa' : '—'}</span>
+    <span class="qbadge">${i < 8 ? '✅ passa' : '❌ fora'}</span>
   </div>`).join('');
 }
 
-function refreshGroup(g) {
-  const el = $(`#stand-${g}`);
-  if (el) el.innerHTML = standHtml(g);
-  const th = $('#thirds-list');
-  if (th) th.innerHTML = thirdsHtml();
+// Recalcula TODAS as tabelas e listas (o corte dos 3ºs é global, muda entre grupos).
+function refreshAll() {
+  const q3 = qualifiedThirdsSet();
+  for (const g of Object.keys(META.groups)) {
+    const el = $(`#stand-${g}`);
+    if (el) el.innerHTML = standHtml(g, q3);
+  }
+  const ids = { '#list-1': () => posListHtml(0), '#list-2': () => posListHtml(1), '#thirds-list': thirdsHtml };
+  for (const [sel, fn] of Object.entries(ids)) { const el = $(sel); if (el) el.innerHTML = fn(); }
 }
 
 async function renderPalpites() {
@@ -345,6 +380,8 @@ async function renderPalpites() {
   const locks = PoolState.data.stageLocks || {};
   const matchById = new Map(matches.map((m) => [m.id, m]));
 
+  const groupKeys = Object.keys(META.groups);
+
   let html = `
     <div class="card">
       <div class="row" style="align-items:center">
@@ -353,30 +390,47 @@ async function renderPalpites() {
       </div>
     </div>`;
 
+  // ---- Nav lateral dos grupos (scroll horizontal) ----
+  html += `<div class="group-nav" id="group-nav">
+    ${groupKeys.map((g) => `<button class="gchip" data-goto="group-${g}">${g}</button>`).join('')}
+  </div>`;
+
   // ---- Fase de grupos: 12 cards com classificação ao vivo + jogos ----
   html += `<h2 class="stage-title">${esc(META.stageNames.group || 'Fase de Grupos')}</h2>
     <p class="muted hint">Coloque os placares: a classificação de cada grupo se atualiza na hora. Os 2 primeiros + os 8 melhores 3ºs vão pro mata-mata. Vale <b>${PoolState.data.pool.scoring.pts_advance} pts</b> por seleção que você acertar.</p>
     <div class="group-grid">`;
-  for (const g of Object.keys(META.groups)) {
+  for (const g of groupKeys) {
     const q = PoolState.qsaved[g];
     const badge = q && q.points ? `<span class="pill pts">+${q.points}</span>` : '';
-    html += `<div class="card group-card">
+    html += `<div class="card group-card" id="group-${g}">
       <h3>Grupo ${g} ${badge}</h3>
       <div class="stand-wrap" id="stand-${g}">${standHtml(g)}</div>
       <div class="gmatches">
         ${matches.filter((m) => m.stage === 'group' && m.group_label === g).map(matchRow).join('')}
       </div>
+      <div class="group-foot"><button class="btn-link-danger" data-clear-group="${g}">🧹 Limpar palpites do grupo ${g}</button></div>
     </div>`;
   }
   html += `</div>`;
 
-  // ---- Melhores 3ºs colocados (ao vivo) ----
-  const t3 = PoolState.qsaved['__3__'];
-  html += `<div class="card">
-    <h3>🥉 Melhores 3ºs colocados ${t3 && t3.points ? `<span class="pill pts">+${t3.points}</span>` : ''}</h3>
-    <p class="muted">Os <b>8 melhores</b> terceiros (entre os 12 grupos) também se classificam. Ajuste os placares e veja quem entra.</p>
-    <div class="thirds" id="thirds-list">${thirdsHtml()}</div>
-  </div>`;
+  // ---- Prévia dos classificados (1º, 2º e 3º) ----
+  const q1 = PoolState.qsaved; // tem points por grupo + __3__
+  html += `<h2 class="stage-title">🏁 Classificados (prévia dos seus palpites)</h2>
+    <div class="qual-cols">
+      <div class="card">
+        <h3>🥇 1º colocados</h3>
+        <div class="thirds" id="list-1">${posListHtml(0)}</div>
+      </div>
+      <div class="card">
+        <h3>🥈 2º colocados</h3>
+        <div class="thirds" id="list-2">${posListHtml(1)}</div>
+      </div>
+      <div class="card">
+        <h3>🥉 Melhores 3ºs ${q1['__3__'] && q1['__3__'].points ? `<span class="pill pts">+${q1['__3__'].points}</span>` : ''}</h3>
+        <p class="muted">Os <b>8 melhores</b> entre os 12 grupos também passam.</p>
+        <div class="thirds" id="thirds-list">${thirdsHtml()}</div>
+      </div>
+    </div>`;
 
   // ---- Mata-mata (travado por fase) ----
   for (const stage of ['r32', 'r16', 'qf', 'sf', 'third', 'final']) {
@@ -396,7 +450,7 @@ async function renderPalpites() {
   }
 
   html += `<div class="sticky-save">
-    <span class="muted" id="save-hint">Palpites travam no início de cada jogo.</span>
+    <button id="btn-clear-all" class="btn-link-danger">🧹 Limpar tudo</button>
     <button id="btn-save" class="btn-gold">💾 Salvar palpites</button>
   </div>`;
 
@@ -408,17 +462,69 @@ async function renderPalpites() {
     PoolState.me = null; drawPoolShell();
   };
 
-  view.querySelectorAll('input[data-match]').forEach((inp) => {
-    inp.oninput = () => {
-      const id = inp.dataset.match, side = inp.dataset.side;
-      PoolState.draft[id] = PoolState.draft[id] || {};
-      PoolState.draft[id][side] = inp.value === '' ? '' : Math.max(0, Math.min(99, parseInt(inp.value, 10) || 0));
-      const m = matchById.get(Number(id));
-      if (m && m.stage === 'group') refreshGroup(m.group_label);
-    };
+  // nav dos grupos -> rola até o card
+  view.querySelectorAll('.gchip').forEach((b) => {
+    b.onclick = () => { const el = $('#' + b.dataset.goto); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   });
 
+  // inputs de placar: só dígito, e pula pro próximo automaticamente
+  const scoreInputs = [...view.querySelectorAll('input[data-match]')];
+  scoreInputs.forEach((inp, idx) => {
+    inp.oninput = () => {
+      let v = inp.value.replace(/[^0-9]/g, '').slice(0, 1); // 1 dígito só
+      inp.value = v;
+      const id = inp.dataset.match, side = inp.dataset.side;
+      PoolState.draft[id] = PoolState.draft[id] || {};
+      PoolState.draft[id][side] = v === '' ? '' : Number(v);
+      const m = matchById.get(Number(id));
+      if (m && m.stage === 'group') refreshAll();
+      if (v !== '' && scoreInputs[idx + 1]) { scoreInputs[idx + 1].focus(); scoreInputs[idx + 1].select(); }
+    };
+    inp.onfocus = () => inp.select();
+  });
+
+  // limpar por grupo
+  view.querySelectorAll('[data-clear-group]').forEach((b) => {
+    b.onclick = () => clearPredictions(b.dataset.clearGroup);
+  });
+  // limpar tudo (com confirmação)
+  $('#btn-clear-all').onclick = async () => {
+    const ok = await confirmModal('Apagar TODOS os seus palpites?', 'Isso remove todos os placares que você ainda pode editar (jogos não iniciados). Não dá pra desfazer.');
+    if (ok) clearPredictions(null);
+  };
+
   $('#btn-save').onclick = savePredictions;
+}
+
+// Limpa palpites no servidor (group=null -> tudo) e recarrega a aba.
+async function clearPredictions(group) {
+  try {
+    const r = await api('POST', `/api/pools/${PoolState.slug}/predictions/clear`,
+      group ? { group } : {}, { 'x-participant-token': PoolState.me.token });
+    toast(`🧹 ${r.cleared || 0} palpite(s) apagado(s).`);
+    renderPalpites();
+  } catch (e) { toast(e.message, true); }
+}
+
+// Modal de confirmação simples (retorna Promise<boolean>).
+function confirmModal(title, body) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov';
+    ov.innerHTML = `<div class="modal">
+      <h3>${esc(title)}</h3>
+      <p class="muted">${esc(body)}</p>
+      <div class="row" style="margin-top:.8rem">
+        <button class="btn-soft" data-no>Cancelar</button>
+        <button class="btn-primary" data-yes style="background:var(--danger)">Apagar</button>
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+    const close = (val) => { ov.remove(); resolve(val); };
+    ov.querySelector('[data-no]').onclick = () => close(false);
+    ov.querySelector('[data-yes]').onclick = () => close(true);
+    ov.onclick = (e) => { if (e.target === ov) close(false); };
+  });
 }
 
 function matchRow(m) {
@@ -436,9 +542,9 @@ function matchRow(m) {
     center = `<div class="scorebox"><b>${ph}</b><span class="vs">x</span><b>${pa}</b></div>`;
   } else {
     center = `<div class="scorebox">
-      <input type="number" min="0" max="99" inputmode="numeric" data-match="${m.id}" data-side="home" value="${d.home ?? ''}" />
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" enterkeyhint="next" data-match="${m.id}" data-side="home" value="${d.home ?? ''}" />
       <span class="vs">x</span>
-      <input type="number" min="0" max="99" inputmode="numeric" data-match="${m.id}" data-side="away" value="${d.away ?? ''}" />
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" enterkeyhint="next" data-match="${m.id}" data-side="away" value="${d.away ?? ''}" />
     </div>`;
   }
 

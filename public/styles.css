@@ -141,15 +141,49 @@ button:active { transform: translateY(1px); }
 .group-card .match { padding: 0.45rem 0.5rem; }
 .group-card .match .team { font-size: 0.85rem; }
 
-table.stand { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-table.stand td { padding: 0.28rem 0.35rem; border-bottom: 1px solid var(--line); }
-table.stand td.pos { width: 1.4rem; text-align: center; color: var(--muted); font-weight: 700; }
-table.stand td.tm { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
-table.stand td.n { text-align: center; width: 2.2rem; }
+.stand-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.stand { width: 100%; border-collapse: collapse; font-size: 0.78rem; min-width: 360px; }
+table.stand td { padding: 0.26rem 0.3rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.stand td.pos { width: 1.2rem; text-align: center; color: var(--muted); font-weight: 700; }
+table.stand td.tm { font-weight: 600; position: sticky; left: 0; background: #fff; }
+table.stand td.tm .flag { margin-right: 0.35rem; }
+table.stand td.tm span { vertical-align: middle; }
+table.stand td.n { text-align: center; width: 1.7rem; color: var(--ink); }
+table.stand tr.stand-head td { color: var(--muted); font-weight: 700; font-size: 0.7rem; border-bottom: 2px solid var(--line); background: #fafbfa; }
+table.stand tr.stand-head td.tm { background: #fafbfa; }
 table.stand tr.q1 td.pos { color: var(--green); }
-table.stand tr.q1 { background: #eafaf0; }
-table.stand tr.q3 { background: #fff7df; }
+table.stand tr.q1 td, table.stand tr.q1 td.tm { background: #eafaf0; }
+table.stand tr.q3 td, table.stand tr.q3 td.tm { background: #fff7df; }
 table.stand tr.q3 td.pos { color: #b58900; }
+.q3note { font-size: 0.78rem; margin-top: 0.4rem; padding: 0.3rem 0.45rem; border-radius: 8px; }
+.q3note.yes { background: #eafaf0; color: var(--green-dark); }
+.q3note.no { background: #fdeeee; color: var(--danger); }
+
+/* nav lateral dos grupos */
+.group-nav {
+  position: sticky; top: 52px; z-index: 9; display: flex; gap: 0.35rem; overflow-x: auto;
+  padding: 0.4rem 0.1rem; margin-bottom: 0.4rem; background: var(--bg);
+  -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+}
+.group-nav .gchip {
+  flex: 0 0 auto; width: 2.2rem; height: 2.2rem; border-radius: 999px; padding: 0;
+  background: #fff; border: 1px solid var(--line); color: var(--green-dark); font-weight: 800;
+}
+.group-nav .gchip:hover { background: var(--green); color: #fff; border-color: var(--green); }
+
+/* rodapé de limpar do grupo */
+.group-foot { margin-top: 0.5rem; text-align: right; }
+.btn-link-danger { background: transparent; color: var(--danger); padding: 0.3rem 0.4rem; font-size: 0.82rem; }
+.btn-link-danger:hover { text-decoration: underline; }
+
+/* colunas dos classificados */
+.qual-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.9rem; }
+.qual-cols .card { margin-bottom: 0; }
+
+/* modal */
+.modal-ov { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem; }
+.modal { background: #fff; border-radius: var(--radius); padding: 1.2rem; max-width: 420px; width: 100%; box-shadow: var(--shadow); }
+.modal h3 { margin: 0 0 0.4rem; }
 
 /* ---------- melhores 3ºs ---------- */
 .thirds { display: flex; flex-direction: column; gap: 0.3rem; }

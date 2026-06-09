@@ -239,7 +239,7 @@ export const THIRDS_KEY = '__3__';
 // Estatística geral por time (pontos, gols pró/contra) a partir de uma lista de jogos.
 function baseStats(teams, games) {
   const table = {};
-  for (const t of teams) table[t] = { team: t, j: 0, pts: 0, gf: 0, ga: 0 };
+  for (const t of teams) table[t] = { team: t, j: 0, v: 0, e: 0, d: 0, pts: 0, gf: 0, ga: 0 };
   for (const m of games) {
     if (m.home_score == null || m.away_score == null) continue;
     const h = table[m.home_team], a = table[m.away_team];
@@ -247,9 +247,9 @@ function baseStats(teams, games) {
     h.j++; a.j++;
     h.gf += m.home_score; h.ga += m.away_score;
     a.gf += m.away_score; a.ga += m.home_score;
-    if (m.home_score > m.away_score) h.pts += 3;
-    else if (m.home_score < m.away_score) a.pts += 3;
-    else { h.pts += 1; a.pts += 1; }
+    if (m.home_score > m.away_score) { h.pts += 3; h.v++; a.d++; }
+    else if (m.home_score < m.away_score) { a.pts += 3; a.v++; h.d++; }
+    else { h.pts += 1; a.pts += 1; h.e++; a.e++; }
   }
   for (const t of teams) table[t].gd = table[t].gf - table[t].ga;
   return table;
