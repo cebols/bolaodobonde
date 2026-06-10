@@ -366,6 +366,25 @@ app.get('/api/pools/:slug/participants/:name', wrap(async (req, res) => {
   res.json({ name: p.name, predictions, total });
 }));
 
+// Palpites de TODOS os participantes para UMA partida — revelados só quando o
+// jogo já começou ou encerrou (anti-trapaça). Ordenados por pontos (desc).
+app.get('/api/pools/:slug/matches/:id/predictions', wrap(async (req, res) => {
+  const pool = await getPool(req, res); if (!pool) return;
+  const m = await get('SELECT * FROM matches WHERE id = $1 AND pool_id = $2', [req.params.id, pool.id]);
+  if (!m) return res.status(404).json({ error: 'Partida não encontrada.' });
+  const started = !!m.finished || new Date(m.kickoff).getTime() <= Date.now();
+  if (!started) return res.json({ match: matchPublic(m), revealed: false, predictions: [] });
+  const rows = await all(
+    `SELECT pa.name, pr.home_score, pr.away_score, pr.points
+       FROM predictions pr JOIN participants pa ON pa.id = pr.participant_id
+      WHERE pr.match_id = $1 AND pa.pool_id = $2`, [m.id, pool.id]);
+  const total = await get('SELECT COUNT(*) AS c FROM participants WHERE pool_id = $1', [pool.id]);
+  const predictions = rows
+    .map((r) => ({ name: r.name, home_score: r.home_score, away_score: r.away_score, points: r.points }))
+    .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+  res.json({ match: matchPublic(m), revealed: true, predictions, participants: Number(total.c) });
+}));
+
 // ---------- admin ----------
 async function requireAdmin(req, res) {
   const pool = await getPool(req, res); if (!pool) return null;

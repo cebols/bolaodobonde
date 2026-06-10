@@ -266,6 +266,7 @@ function drawPoolShell() {
   const tabs = [
     ['palpites', '🎯 Meus palpites'],
     ['desempenho', '📈 Desempenho'],
+    ['partidas', '📅 Partidas'],
     ['chave', '🗝️ Chave'],
     ['ranking', '📊 Ranking'],
   ];
@@ -293,6 +294,7 @@ function drawPoolShell() {
 
   if (PoolState.tab === 'palpites') renderPalpites();
   else if (PoolState.tab === 'desempenho') renderDesempenho();
+  else if (PoolState.tab === 'partidas') renderPartidas();
   else if (PoolState.tab === 'chave') renderBracket();
   else if (PoolState.tab === 'ranking') renderRanking();
   else if (PoolState.tab === 'admin') renderAdmin();
@@ -788,7 +790,7 @@ async function renderRanking() {
       </tr>`).join('')}
       </tbody></table></div></div>`;
 
-    view.innerHTML = table + historyFeedHtml(rounds);
+    view.innerHTML = table + historyFeedHtml(rounds) + tiebreakHtml();
 
     view.querySelectorAll('.board-row').forEach((tr) => {
       tr.onclick = () => openCompare(tr.dataset.name);
@@ -817,6 +819,32 @@ function historyFeedHtml(rounds) {
   }
   // mini-trajetória: posição de cada um ao longo dos dias (texto compacto)
   return `<div class="card"><h3>📜 Histórico — última rodada (${esc(dateLabel(last.date))})</h3>${feed}</div>`;
+}
+
+// Card explicando os critérios de desempate (ranking geral + classificação dos grupos).
+function tiebreakHtml() {
+  return `<div class="card tiebreak-card">
+    <h3>⚖️ Critérios de desempate</h3>
+    <div class="tb-block">
+      <h4>🏅 No ranking geral (entre participantes)</h4>
+      <ol class="tb-list">
+        <li><b>Pontos totais</b> (palpites + quem avança).</li>
+        <li><b>Mais placares exatos</b> 🎯 — quem cravou mais resultados na mosca sobe.</li>
+        <li>Ordem alfabética (só pra não ficar indefinido).</li>
+      </ol>
+    </div>
+    <div class="tb-block">
+      <h4>🥇 Na classificação dos grupos (define quem avança)</h4>
+      <p class="muted">Seguimos as regras oficiais da FIFA para a Copa de 2026:</p>
+      <ol class="tb-list">
+        <li><b>Pontos</b> na fase de grupos.</li>
+        <li><b>Confronto direto</b> entre os empatados: pontos → saldo de gols → gols marcados <i>só nos jogos entre eles</i>.</li>
+        <li>Persistindo o empate, critérios gerais: <b>saldo de gols</b> → <b>gols marcados</b> no grupo todo.</li>
+        <li>Por fim, <b>ranking mundial da FIFA</b> como desempate final.</li>
+      </ol>
+      <p class="muted tb-foot">Os <b>8 melhores 3ºs colocados</b> entre os 12 grupos são ordenados por pontos → saldo → gols → ranking FIFA.</p>
+    </div>
+  </div>`;
 }
 
 // Modal de comparação: seus palpites vs. os de outro participante (só jogos já iniciados).
@@ -1051,6 +1079,96 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+
+// ---------- aba: partidas (lista + palpites por jogo) ----------
+const STAGE_ICON = { group: '⚽', r32: '🏟️', r16: '🔥', qf: '⭐', sf: '🌟', third: '🥉', final: '🏆' };
+
+function matchStatus(m) {
+  const started = m.finished || m.locked || new Date(m.kickoff).getTime() <= Date.now();
+  if (m.finished) return { cls: 'done', pill: `<span class="pill done">✅ ${m.home_score} x ${m.away_score}</span>` };
+  if (started && m.home_score != null) return { cls: 'live', pill: `<span class="pill live"><span class="live-dot"></span>${m.home_score} x ${m.away_score}</span>` };
+  if (started) return { cls: 'live', pill: `<span class="pill live"><span class="live-dot"></span>em jogo</span>` };
+  return { cls: 'sched', pill: `<span class="pill tbd">${esc(fmtDate(m.kickoff))}</span>` };
+}
+
+function partidaCard(m) {
+  const home = m.home_team ? `${flag(m.home_team)} <span>${esc(m.home_team)}</span>` : `<span class="tbd-team">${esc(m.home_label || 'A definir')}</span>`;
+  const away = m.away_team ? `${flag(m.away_team)} <span>${esc(m.away_team)}</span>` : `<span class="tbd-team">${esc(m.away_label || 'A definir')}</span>`;
+  const st = matchStatus(m);
+  return `<div class="pcard ${st.cls}" data-match-id="${m.id}">
+    <button class="pcard-head">
+      <div class="pc-teams">
+        <span class="pc-side">${home}</span>
+        <span class="pc-vs">×</span>
+        <span class="pc-side">${away}</span>
+      </div>
+      <div class="pc-meta">${st.pill}<span class="pc-caret" aria-hidden="true">▾</span></div>
+    </button>
+    <div class="pcard-panel" hidden></div>
+  </div>`;
+}
+
+function renderPartidas() {
+  const view = $('#tabview');
+  const matches = (PoolState.data.matches || []).slice().sort((a, b) => a.ord - b.ord);
+  const stages = ['group', 'r32', 'r16', 'qf', 'sf', 'third', 'final'];
+  let html = `<div class="card"><h3>📅 Todas as partidas</h3>
+    <p class="muted">Toque num jogo para ver os palpites da galera. Os palpites de um jogo só são revelados quando ele começa — depois disso, aparecem ordenados por pontos.</p></div>`;
+  for (const stage of stages) {
+    const list = matches.filter((m) => m.stage === stage);
+    if (!list.length) continue;
+    html += `<h2 class="stage-title">${STAGE_ICON[stage] || ''} ${esc(META.stageNames[stage] || stage)}</h2>`;
+    if (stage === 'group') {
+      for (const g of Object.keys(META.groups)) {
+        const gl = list.filter((m) => m.group_label === g);
+        if (!gl.length) continue;
+        html += `<div class="pgroup-h">Grupo ${g}</div>${gl.map(partidaCard).join('')}`;
+      }
+    } else {
+      let lastDay = '';
+      for (const m of list) {
+        const dk = dayKey(m.kickoff);
+        if (dk !== lastDay) { html += `<div class="pgroup-h">📅 ${esc(dk)}</div>`; lastDay = dk; }
+        html += partidaCard(m);
+      }
+    }
+  }
+  view.innerHTML = html;
+  view.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
+}
+
+async function togglePartida(card) {
+  const panel = card.querySelector('.pcard-panel');
+  if (!panel.hidden) { panel.hidden = true; card.classList.remove('open'); return; }
+  card.classList.add('open'); panel.hidden = false;
+  if (panel.dataset.loaded) return;
+  panel.innerHTML = `<p class="muted center" style="padding:.5rem 0">Carregando palpites…</p>`;
+  try {
+    const d = await api('GET', `/api/pools/${PoolState.slug}/matches/${card.dataset.matchId}/predictions`);
+    panel.dataset.loaded = '1';
+    if (!d.revealed) {
+      panel.innerHTML = `<div class="ppanel-lock">🔒 Os palpites deste jogo serão revelados quando ele começar.</div>`;
+      return;
+    }
+    if (!d.predictions.length) {
+      panel.innerHTML = `<div class="ppanel-lock">Ninguém palpitou este jogo. 😴</div>`;
+      return;
+    }
+    const meName = PoolState.me?.name;
+    const hasResult = d.match.home_score != null;
+    panel.innerHTML = `<div class="ppanel">
+      <div class="ppanel-head"><span>${d.predictions.length}/${d.participants} palpitaram</span>${hasResult ? '<span>pontos</span>' : ''}</div>
+      ${d.predictions.map((p, i) => `<div class="prow ${p.name === meName ? 'me' : ''}">
+        <span class="prk">${hasResult && i === 0 && p.points > 0 ? '🥇' : (i + 1)}</span>
+        <span class="pnm">${esc(p.name)}${p.name === meName ? ' <span class="muted">(você)</span>' : ''}</span>
+        <span class="ppick">${p.home_score} x ${p.away_score}</span>
+        ${hasResult ? `<span class="pill ${p.points ? 'pts' : ''} ppts">${p.points}</span>` : '<span class="ppts muted">—</span>'}
+      </div>`).join('')}
+    </div>`;
+  } catch (e) {
+    panel.innerHTML = `<p class="center" style="padding:.5rem 0">${esc(e.message)}</p>`;
+  }
 }
 
 // ---------- aba: admin ----------
