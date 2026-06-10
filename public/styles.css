@@ -78,7 +78,7 @@ main { flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding: 1.2rem 
 
 /* ---------- forms & buttons ---------- */
 label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem; }
-input[type=text], input[type=password], input[type=number], input[type=datetime-local], select {
+input[type=text], input[type=password], input[type=number], input[type=datetime-local], input[type=search], select {
   width: 100%; padding: 0.6rem 0.7rem; border: 1px solid var(--line); border-radius: 10px;
   font-size: 1rem; background: var(--card2); color: var(--ink);
 }
@@ -398,6 +398,25 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .prow .pnm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prow .ppick { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ink); }
 .prow .ppts { min-width: 2.4rem; text-align: center; }
+
+/* ---------- partidas: busca + próximos jogos ---------- */
+.partidas-bar {
+  position: sticky; top: 106px; z-index: 8; background: var(--bg);
+  padding: 0.5rem 0 0.5rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--line);
+}
+.search-row input[type=search] { width: 100%; }
+.upcoming-h { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin: 0.5rem 0 0.3rem; }
+.upcoming { display: flex; gap: 0.4rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-bottom: 0.2rem; }
+.upcoming.empty { font-size: 0.85rem; padding: 0.2rem 0; }
+.up-chip {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 0.18rem;
+  background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 0.4rem 0.65rem;
+  color: var(--ink); white-space: nowrap;
+}
+.up-chip:hover { border-color: var(--green); }
+.up-when { font-size: 0.66rem; color: var(--gold); font-weight: 800; letter-spacing: .02em; display: inline-flex; align-items: center; }
+.up-when .live-dot { width: 7px; height: 7px; }
+.up-teams { font-size: 0.84rem; font-weight: 600; display: flex; align-items: center; gap: 0.3rem; }
 
 /* ---------- critérios de desempate ---------- */
 .tiebreak-card h4 { margin: 0.6rem 0 0.3rem; font-size: 0.95rem; color: var(--green-bright); }

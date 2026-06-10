@@ -44,6 +44,9 @@ function flag(t) {
 // Emoji (usado só dentro de <option>, onde imagem não vale).
 const flagEmoji = (t) => (t && META.flags[t]) ? META.flags[t] : '⚪';
 
+// Normaliza texto para busca (sem acento, minúsculo).
+const normStr = (s) => String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+
 // Cor estável a partir do nome (para o placeholder de avatar).
 function avColor(name) {
   let h = 0; const s = String(name || '');
@@ -1240,7 +1243,8 @@ function partidaCard(m) {
   const home = m.home_team ? `${flag(m.home_team)} <span>${esc(m.home_team)}</span>` : `<span class="tbd-team">${esc(m.home_label || 'A definir')}</span>`;
   const away = m.away_team ? `${flag(m.away_team)} <span>${esc(m.away_team)}</span>` : `<span class="tbd-team">${esc(m.away_label || 'A definir')}</span>`;
   const st = matchStatus(m);
-  return `<div class="pcard ${st.cls}" data-match-id="${m.id}">
+  const searchText = normStr([m.home_team, m.away_team, m.home_label, m.away_label, m.group_label, m.round_label].filter(Boolean).join(' '));
+  return `<div class="pcard ${st.cls}" data-match-id="${m.id}" data-search="${esc(searchText)}">
     <button class="pcard-head">
       <div class="pc-teams">
         <span class="pc-side">${home}</span>
@@ -1253,33 +1257,93 @@ function partidaCard(m) {
   </div>`;
 }
 
+const localDay = (d) => new Date(d).toLocaleDateString('en-CA'); // YYYY-MM-DD local
+
+// Barra "Próximos jogos": jogos de hoje e amanhã ainda não encerrados.
+function upcomingBarHtml(list, todayStr) {
+  if (!list.length) return `<div class="upcoming-wrap"><div class="upcoming empty muted">Sem jogos hoje ou amanhã. 😴</div></div>`;
+  return `<div class="upcoming-wrap">
+    <div class="upcoming">${list.map((m) => {
+      const tag = localDay(m.kickoff) === todayStr ? 'Hoje' : 'Amanhã';
+      const t = new Date(m.kickoff).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const liveNow = !m.finished && new Date(m.kickoff).getTime() <= Date.now();
+      return `<button class="up-chip" data-goto="${m.id}">
+        <span class="up-when">${liveNow ? '<span class="live-dot"></span>AO VIVO' : `${tag} · ${esc(t)}`}</span>
+        <span class="up-teams">${flag(m.home_team)} ${esc(m.home_team)} <span class="cmp-x">×</span> ${esc(m.away_team)} ${flag(m.away_team)}</span>
+      </button>`;
+    }).join('')}</div>
+  </div>`;
+}
+
 function renderPartidas() {
   const view = $('#tabview');
   const matches = (PoolState.data.matches || []).slice().sort((a, b) => a.ord - b.ord);
   const stages = ['group', 'r32', 'r16', 'qf', 'sf', 'third', 'final'];
+
+  // próximos: hoje + amanhã, ainda não encerrados
+  const now = new Date();
+  const todayStr = localDay(now);
+  const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1);
+  const tmrStr = localDay(tmr);
+  const upcoming = matches
+    .filter((m) => m.home_team && m.away_team && !m.finished)
+    .filter((m) => { const s = localDay(m.kickoff); return s === todayStr || s === tmrStr; })
+    .sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
+
   let html = `<div class="card"><h3>📅 Todas as partidas</h3>
-    <p class="muted">Toque num jogo para ver os palpites da galera. Os palpites de um jogo só são revelados quando ele começa — depois disso, aparecem ordenados por pontos.</p></div>`;
+    <p class="muted">Toque num jogo para ver os palpites da galera (revelados quando o jogo começa). Use a busca pra achar uma seleção.</p></div>`;
+
+  html += `<div class="partidas-bar">
+    <div class="search-row"><input id="match-search" type="search" inputmode="search" autocomplete="off" placeholder="🔎 Buscar seleção (ex.: Brasil, França…)" /></div>
+    <div class="upcoming-h muted">⏭️ Próximos jogos</div>
+    ${upcomingBarHtml(upcoming, todayStr)}
+  </div>`;
+
+  html += `<div id="partidas-list">`;
   for (const stage of stages) {
     const list = matches.filter((m) => m.stage === stage);
     if (!list.length) continue;
-    html += `<h2 class="stage-title">${STAGE_ICON[stage] || ''} ${esc(META.stageNames[stage] || stage)}</h2>`;
+    html += `<div class="pstage"><h2 class="stage-title">${STAGE_ICON[stage] || ''} ${esc(META.stageNames[stage] || stage)}</h2>`;
     if (stage === 'group') {
       for (const g of Object.keys(META.groups)) {
         const gl = list.filter((m) => m.group_label === g);
         if (!gl.length) continue;
-        html += `<div class="pgroup-h">Grupo ${g}</div>${gl.map(partidaCard).join('')}`;
+        html += `<div class="pmatch-block"><div class="pgroup-h">Grupo ${g}</div>${gl.map(partidaCard).join('')}</div>`;
       }
     } else {
-      let lastDay = '';
+      let lastDay = '', block = '';
+      const flush = () => { if (block) { html += `<div class="pmatch-block">${block}</div>`; block = ''; } };
       for (const m of list) {
         const dk = dayKey(m.kickoff);
-        if (dk !== lastDay) { html += `<div class="pgroup-h">📅 ${esc(dk)}</div>`; lastDay = dk; }
-        html += partidaCard(m);
+        if (dk !== lastDay) { flush(); block = `<div class="pgroup-h">📅 ${esc(dk)}</div>`; lastDay = dk; }
+        block += partidaCard(m);
       }
+      flush();
     }
+    html += `</div>`;
   }
+  html += `</div>`;
   view.innerHTML = html;
+
+  const listEl = $('#partidas-list');
+  const search = $('#match-search');
+  const applyFilter = () => {
+    const q = normStr(search.value);
+    listEl.querySelectorAll('.pcard').forEach((c) => { c.hidden = !!q && !(c.dataset.search || '').includes(q); });
+    listEl.querySelectorAll('.pmatch-block').forEach((b) => { b.hidden = ![...b.querySelectorAll('.pcard')].some((c) => !c.hidden); });
+    listEl.querySelectorAll('.pstage').forEach((s) => { s.hidden = ![...s.querySelectorAll('.pmatch-block')].some((b) => !b.hidden); });
+  };
+  search.oninput = applyFilter;
+
   view.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
+
+  view.querySelectorAll('.up-chip').forEach((b) => {
+    b.onclick = () => {
+      if (search.value) { search.value = ''; applyFilter(); }
+      const card = listEl.querySelector(`.pcard[data-match-id="${b.dataset.goto}"]`);
+      if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (!card.classList.contains('open')) togglePartida(card); }
+    };
+  });
 }
 
 async function togglePartida(card) {
