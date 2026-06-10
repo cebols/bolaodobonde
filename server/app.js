@@ -184,11 +184,15 @@ app.get('/api/pools/:slug/me', wrap(async (req, res) => {
   const me = await getParticipant(req, pool);
   if (!me) return res.status(401).json({ error: 'Sessão inválida. Entre novamente.' });
   const preds = await all(
-    'SELECT match_id, home_score, away_score, points FROM predictions WHERE participant_id = $1', [me.id]);
+    'SELECT match_id, home_score, away_score, points, updated_at FROM predictions WHERE participant_id = $1', [me.id]);
   const quals = await all(
     'SELECT group_label, team_first, team_second, points FROM qualifiers WHERE participant_id = $1', [me.id]);
   const total = preds.reduce((s, p) => s + p.points, 0) + quals.reduce((s, q) => s + q.points, 0);
-  res.json({ name: me.name, predictions: preds, qualifiers: quals, total });
+  const lastSaved = preds.reduce((mx, p) => {
+    const t = p.updated_at ? new Date(p.updated_at).getTime() : 0;
+    return t > mx ? t : mx;
+  }, 0);
+  res.json({ name: me.name, predictions: preds, qualifiers: quals, total, lastSaved: lastSaved || null });
 }));
 
 app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
@@ -216,11 +220,11 @@ app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
     const a = Math.max(0, Math.min(99, parseInt(p.away, 10)));
     if (Number.isNaN(h) || Number.isNaN(a)) { skipped++; continue; }
     const pts = scoreFor(pool, h, a, m);
-    await run(`INSERT INTO predictions (participant_id, match_id, home_score, away_score, points)
-      VALUES ($1, $2, $3, $4, $5)
+    await run(`INSERT INTO predictions (participant_id, match_id, home_score, away_score, points, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (participant_id, match_id)
-      DO UPDATE SET home_score = excluded.home_score, away_score = excluded.away_score, points = excluded.points`,
-      [me.id, m.id, h, a, pts]);
+      DO UPDATE SET home_score = excluded.home_score, away_score = excluded.away_score, points = excluded.points, updated_at = excluded.updated_at`,
+      [me.id, m.id, h, a, pts, new Date().toISOString()]);
     saved++;
   }
 
@@ -286,6 +290,80 @@ app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
     match_pts: Number(r.match_pts), qual_pts: Number(r.qual_pts), exatos: Number(r.exatos),
   })).sort((a, b) => b.total - a.total || b.exatos - a.exatos || a.name.localeCompare(b.name));
   res.json({ leaderboard: board });
+}));
+
+// ---------- histórico do ranking ----------
+// Reconstrói a classificação "dia a dia" (matchday) só a partir dos dados que já
+// existem — não precisa de snapshots no banco. Cada rodada é um dia em que terminou
+// pelo menos um jogo; o total de cada um é cumulativo até aquele dia.
+app.get('/api/pools/:slug/history', wrap(async (req, res) => {
+  const pool = await getPool(req, res); if (!pool) return;
+  const parts = await all('SELECT id, name FROM participants WHERE pool_id = $1', [pool.id]);
+  if (!parts.length) return res.json({ rounds: [] });
+
+  const preds = await all(
+    `SELECT pr.participant_id AS pid, pr.points AS pts, m.kickoff AS kickoff
+       FROM predictions pr JOIN matches m ON m.id = pr.match_id
+      WHERE m.pool_id = $1 AND m.finished = 1`, [pool.id]);
+  const quals = await all('SELECT participant_id AS pid, group_label, points FROM qualifiers WHERE pool_id = $1', [pool.id]);
+  const groupMatches = await all(
+    "SELECT group_label, kickoff, finished FROM matches WHERE pool_id = $1 AND stage = 'group'", [pool.id]);
+
+  const day = (iso) => String(iso || '').slice(0, 10); // YYYY-MM-DD
+
+  // Dia em que cada grupo (e o pseudo-grupo dos 3ºs) ficou completo.
+  const byGroup = {};
+  for (const m of groupMatches) (byGroup[m.group_label] = byGroup[m.group_label] || []).push(m);
+  const groupDoneDay = {};
+  for (const [g, ms] of Object.entries(byGroup)) {
+    if (ms.length && ms.every((x) => x.finished)) groupDoneDay[g] = ms.reduce((mx, x) => day(x.kickoff) > mx ? day(x.kickoff) : mx, '');
+  }
+  const allGroupsDone = Object.keys(byGroup).length > 0 && Object.keys(byGroup).every((g) => groupDoneDay[g]);
+  const thirdsDoneDay = allGroupsDone ? Object.values(groupDoneDay).reduce((mx, d) => d > mx ? d : mx, '') : null;
+  const qualDoneDay = (gl) => (gl === '__3__' ? thirdsDoneDay : groupDoneDay[gl]);
+
+  // Conjunto ordenado de "dias com jogo encerrado".
+  const days = [...new Set(preds.map((p) => day(p.kickoff)).filter(Boolean))].sort();
+  if (!days.length) return res.json({ rounds: [] });
+
+  const nameById = new Map(parts.map((p) => [p.id, p.name]));
+  let prevRank = new Map();
+  const rounds = days.map((d) => {
+    const totals = new Map(parts.map((p) => [p.id, 0]));
+    for (const p of preds) if (day(p.kickoff) <= d) totals.set(p.pid, (totals.get(p.pid) || 0) + Number(p.pts));
+    for (const q of quals) { const qd = qualDoneDay(q.group_label); if (qd && qd <= d) totals.set(q.pid, (totals.get(q.pid) || 0) + Number(q.points)); }
+    const board = [...totals.entries()]
+      .map(([pid, total]) => ({ name: nameById.get(pid), total }))
+      .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+    board.forEach((row, i) => {
+      row.rank = i + 1;
+      const pr = prevRank.get(row.name);
+      row.delta = pr == null ? 0 : pr - row.rank; // + subiu, - caiu
+    });
+    prevRank = new Map(board.map((r) => [r.name, r.rank]));
+    return { date: d, board };
+  });
+
+  res.json({ rounds });
+}));
+
+// Palpites de UM participante — só dos jogos que JÁ COMEÇARAM (kickoff <= agora),
+// para não vazar palpites futuros (anti-trapaça). Serve a comparação e a visualização.
+app.get('/api/pools/:slug/participants/:name', wrap(async (req, res) => {
+  const pool = await getPool(req, res); if (!pool) return;
+  const p = await get('SELECT * FROM participants WHERE pool_id = $1 AND name = $2', [pool.id, req.params.name]);
+  if (!p) return res.status(404).json({ error: 'Participante não encontrado.' });
+  const now = Date.now();
+  const rows = await all(
+    `SELECT pr.match_id, pr.home_score, pr.away_score, pr.points, m.kickoff, m.finished
+       FROM predictions pr JOIN matches m ON m.id = pr.match_id
+      WHERE pr.participant_id = $1`, [p.id]);
+  const predictions = rows
+    .filter((r) => r.finished || new Date(r.kickoff).getTime() <= now) // jogo já começou ou encerrou
+    .map((r) => ({ match_id: r.match_id, home_score: r.home_score, away_score: r.away_score, points: r.points }));
+  const quals = await all('SELECT group_label, points FROM qualifiers WHERE participant_id = $1', [p.id]);
+  const total = rows.reduce((s, r) => s + Number(r.points), 0) + quals.reduce((s, q) => s + Number(q.points), 0);
+  res.json({ name: p.name, predictions, total });
 }));
 
 // ---------- admin ----------

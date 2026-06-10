@@ -309,10 +309,65 @@ table.board tr.me { background: var(--goldbg); }
 .spacer { height: 0.5rem; }
 .divider { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 0.8rem 0; }
 
+/* ---------- save stamp / palpites faltando ---------- */
+.save-stamp { margin: 0.4rem 0 0; font-size: 0.78rem; }
+.missing-hint { margin: 0.3rem 0 0; font-size: 0.82rem; color: var(--gold); }
+
+/* ---------- ranking: movimento + histórico ---------- */
+.tiebreak-note { margin: -0.1rem 0 0.7rem; font-size: 0.8rem; }
+.board-row { cursor: pointer; }
+.board-row:hover { background: var(--card2); }
+.move { font-weight: 800; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.move.up { color: var(--green-bright); }
+.move.down { color: var(--danger); }
+.move.flat { color: var(--muted); }
+.move-feed { display: flex; flex-direction: column; gap: 0.4rem; }
+.move-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.55rem; border: 1px solid var(--line); border-radius: 10px; font-size: 0.9rem; }
+.move-item.up { border-color: #2a6f48; background: var(--q1bg); }
+.move-item.down { border-color: #6f2a2a; background: var(--dangerbg); }
+.move-item .muted { font-size: 0.8rem; }
+
+/* ---------- comparação ---------- */
+.cmp-modal { max-width: 540px; }
+.cmp-tally { background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.7rem; font-size: 0.9rem; margin: 0.5rem 0 0.7rem; }
+table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.85rem; }
+.cmp-game { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
+.cmp-game .cmp-real { width: 100%; font-size: 0.72rem; color: var(--gold); font-weight: 700; }
+.cmp-x { color: var(--muted); font-size: 0.75rem; }
+.cmp-pts { font-size: 0.7rem; color: var(--muted); font-weight: 700; }
+.cmp-pts.pos { color: var(--green-bright); }
+
+/* ---------- desempenho ---------- */
+.perf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.6rem; margin-top: 0.8rem; }
+.perf-stat { background: var(--card2); border: 1px solid var(--line); border-radius: 12px; padding: 0.7rem 0.5rem; text-align: center; display: flex; flex-direction: column; gap: 0.2rem; }
+.perf-stat .pv { font-size: 1.35rem; font-weight: 800; color: var(--ink); }
+.perf-stat .pl { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
+.perf-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.perf-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.6rem; padding: 0.45rem 0.55rem; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.perf-row.live { border-color: var(--danger); }
+.pr-game { font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.pr-date { width: 100%; font-size: 0.7rem; font-weight: 500; }
+.pr-mid { text-align: center; display: flex; flex-direction: column; gap: 0.1rem; }
+.pr-real { font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
+.pr-yours { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pr-pick { text-align: right; }
+.reason { font-size: 0.72rem; font-weight: 700; padding: 0.15rem 0.45rem; border-radius: 999px; white-space: nowrap; }
+.reason.exact { background: var(--gold); color: #1a1400; }
+.reason.gd { background: var(--q1bg); color: var(--green-bright); }
+.reason.out { background: var(--q1bg); color: var(--green-bright); }
+.reason.wrong { background: var(--dangerbg); color: var(--danger); }
+.reason.miss { background: var(--card2); color: var(--muted); }
+.live-card h3 { display: flex; align-items: center; gap: 0.3rem; }
+.missing-card { border-color: var(--gold); }
+.miss-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0 0.6rem; }
+.miss-chip { background: var(--card2); border: 1px solid var(--line); border-radius: 999px; padding: 0.25rem 0.6rem; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 0.3rem; }
+
 @media (max-width: 560px) {
   .match { grid-template-columns: 1fr auto 1fr; }
   .match .team { font-size: 0.85rem; }
   .hero h1 { font-size: 1.4rem; }
   .bkt-col { min-width: 124px; width: 124px; }
   .bkt-col.bkt-center { min-width: 140px; width: 140px; }
+  .perf-row { grid-template-columns: 1fr auto; }
+  .perf-row .pr-pick { grid-column: 1 / -1; text-align: left; }
 }

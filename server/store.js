@@ -148,10 +148,12 @@ export function ensureSchema() {
         // Colunas adicionadas depois (idempotente p/ bancos já existentes).
         await pgPool.query('ALTER TABLE pools ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ').catch(() => {});
         await pgPool.query("ALTER TABLE pools ADD COLUMN IF NOT EXISTS lock_mode TEXT NOT NULL DEFAULT 'auto'").catch(() => {});
+        await pgPool.query('ALTER TABLE predictions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ').catch(() => {});
       } else {
         sqlite.exec(SCHEMA_SQLITE);
         try { sqlite.exec('ALTER TABLE pools ADD COLUMN synced_at TEXT'); } catch (_) { /* já existe */ }
         try { sqlite.exec("ALTER TABLE pools ADD COLUMN lock_mode TEXT NOT NULL DEFAULT 'auto'"); } catch (_) { /* já existe */ }
+        try { sqlite.exec('ALTER TABLE predictions ADD COLUMN updated_at TEXT'); } catch (_) { /* já existe */ }
       }
     })().catch((e) => {
       // Não envenena o cache: permite nova tentativa no próximo acesso.

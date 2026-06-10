@@ -254,6 +254,7 @@ function startPolling() {
       PoolState.data = fresh;
       if (PoolState.tab === 'chave') renderBracket();
       else if (PoolState.tab === 'ranking') renderRanking();
+      else if (PoolState.tab === 'desempenho') renderDesempenho();
       // aba "palpites" não é re-renderizada para não apagar o que está sendo digitado.
     } catch (_) { /* silencioso */ }
   }, 60000);
@@ -264,6 +265,7 @@ function drawPoolShell() {
   const isAdmin = data.isAdmin;
   const tabs = [
     ['palpites', '🎯 Meus palpites'],
+    ['desempenho', '📈 Desempenho'],
     ['chave', '🗝️ Chave'],
     ['ranking', '📊 Ranking'],
   ];
@@ -290,6 +292,7 @@ function drawPoolShell() {
   });
 
   if (PoolState.tab === 'palpites') renderPalpites();
+  else if (PoolState.tab === 'desempenho') renderDesempenho();
   else if (PoolState.tab === 'chave') renderBracket();
   else if (PoolState.tab === 'ranking') renderRanking();
   else if (PoolState.tab === 'admin') renderAdmin();
@@ -407,12 +410,21 @@ async function renderPalpites() {
 
   const groupKeys = Object.keys(META.groups);
 
+  // jogos ainda abertos para palpite que estão sem placar preenchido
+  const isOpenForPick = (m) => m.home_team && m.away_team && !m.finished && !m.locked && !locks[m.stage] && !lock.locked;
+  const missing = matches.filter(isOpenForPick).filter((m) => {
+    const d = PoolState.draft[m.id];
+    return !d || d.home == null || d.home === '' || d.away == null || d.away === '';
+  }).length;
+
   let html = `
     <div class="card">
       <div class="row" style="align-items:center">
         <div><b>👤 ${esc(mine.name)}</b> · <span class="pill pts">${mine.total} pts</span></div>
         <div style="text-align:right;flex:0"><button id="btn-logout" class="btn-soft btn-sm">Sair</button></div>
       </div>
+      ${mine.lastSaved ? `<p class="muted save-stamp">💾 Último salvamento: ${esc(fmtDate(new Date(mine.lastSaved).toISOString()))}</p>` : ''}
+      ${missing > 0 && !lock.locked ? `<p class="missing-hint">⚠️ Você tem <b>${missing}</b> jogo(s) abertos ainda sem palpite.</p>` : ''}
     </div>`;
 
   if (lock.locked) {
@@ -735,29 +747,310 @@ function renderBracket() {
 }
 
 // ---------- aba: ranking ----------
+function moveBadge(delta) {
+  if (delta > 0) return `<span class="move up">▲${delta}</span>`;
+  if (delta < 0) return `<span class="move down">▼${-delta}</span>`;
+  return `<span class="move flat">–</span>`;
+}
+
 async function renderRanking() {
   const view = $('#tabview');
   view.innerHTML = `<div class="card center"><p>Carregando ranking…</p></div>`;
   try {
-    const { leaderboard } = await api('GET', `/api/pools/${PoolState.slug}/leaderboard`);
+    const [{ leaderboard }, hist] = await Promise.all([
+      api('GET', `/api/pools/${PoolState.slug}/leaderboard`),
+      api('GET', `/api/pools/${PoolState.slug}/history`).catch(() => ({ rounds: [] })),
+    ]);
     const meName = PoolState.me?.name;
     if (!leaderboard.length) {
       view.innerHTML = `<div class="card center"><h3>Ainda não há participantes 🙃</h3><p class="muted">Compartilhe o link do bolão!</p></div>`;
-    } else {
-      view.innerHTML = `<div class="card"><h3>📊 Classificação</h3>
-        <div class="board-wrap"><table class="board"><thead><tr>
-          <th class="num">#</th><th>Participante</th>
-          <th class="num">Jogos</th><th class="num">Avanço</th><th class="num">Exatos</th><th class="num">Total</th>
-        </tr></thead><tbody>
-        ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''}">
-          <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
-          <td>${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</td>
-          <td class="num">${r.match_pts}</td><td class="num">${r.qual_pts}</td>
-          <td class="num">${r.exatos}</td><td class="num"><b>${r.total}</b></td>
-        </tr>`).join('')}
-        </tbody></table></div></div>`;
+      return;
     }
+
+    // mapa de movimento (do último "matchday" do histórico)
+    const rounds = hist.rounds || [];
+    const last = rounds[rounds.length - 1];
+    const deltaByName = new Map((last?.board || []).map((r) => [r.name, r.delta]));
+    const hasMoves = rounds.length >= 2;
+
+    const table = `<div class="card"><h3>📊 Classificação</h3>
+      <p class="muted tiebreak-note">Empate em pontos? Desempata por <b>mais placares exatos</b>. Toque num nome para comparar com você.</p>
+      <div class="board-wrap"><table class="board"><thead><tr>
+        <th class="num">#</th>${hasMoves ? '<th class="num" title="Variação na última rodada">↕</th>' : ''}<th>Participante</th>
+        <th class="num">Jogos</th><th class="num">Avanço</th><th class="num">Exatos</th><th class="num">Total</th>
+      </tr></thead><tbody>
+      ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''} board-row" data-name="${esc(r.name)}">
+        <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
+        ${hasMoves ? `<td class="num">${moveBadge(deltaByName.get(r.name) ?? 0)}</td>` : ''}
+        <td>${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</td>
+        <td class="num">${r.match_pts}</td><td class="num">${r.qual_pts}</td>
+        <td class="num">${r.exatos}</td><td class="num"><b>${r.total}</b></td>
+      </tr>`).join('')}
+      </tbody></table></div></div>`;
+
+    view.innerHTML = table + historyFeedHtml(rounds);
+
+    view.querySelectorAll('.board-row').forEach((tr) => {
+      tr.onclick = () => openCompare(tr.dataset.name);
+    });
   } catch (e) { view.innerHTML = `<div class="card center">${esc(e.message)}</div>`; }
+}
+
+// Feed "como o ranking mexeu" — usa as 2 últimas rodadas do histórico.
+function historyFeedHtml(rounds) {
+  if (!rounds || rounds.length < 2) {
+    return `<div class="card"><h3>📜 Histórico</h3><p class="muted">O histórico de subidas e quedas aparece aqui depois de pelo menos dois dias de jogos encerrados.</p></div>`;
+  }
+  const last = rounds[rounds.length - 1];
+  const movers = [...last.board].filter((r) => r.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 8);
+  const dateLabel = (d) => { try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }); } catch (_) { return d; } };
+  let feed;
+  if (!movers.length) {
+    feed = `<p class="muted">Ninguém mudou de posição na última rodada (${esc(dateLabel(last.date))}).</p>`;
+  } else {
+    feed = `<div class="move-feed">${movers.map((r) => `
+      <div class="move-item ${r.delta > 0 ? 'up' : 'down'}">
+        ${moveBadge(r.delta)} <b>${esc(r.name)}</b>
+        <span class="muted">${r.delta > 0 ? 'subiu' : 'caiu'} para ${r.rank}º · ${r.total} pts</span>
+      </div>`).join('')}</div>`;
+  }
+  // mini-trajetória: posição de cada um ao longo dos dias (texto compacto)
+  return `<div class="card"><h3>📜 Histórico — última rodada (${esc(dateLabel(last.date))})</h3>${feed}</div>`;
+}
+
+// Modal de comparação: seus palpites vs. os de outro participante (só jogos já iniciados).
+async function openCompare(name) {
+  const meName = PoolState.me?.name;
+  const ov = document.createElement('div');
+  ov.className = 'modal-ov';
+  ov.innerHTML = `<div class="modal cmp-modal"><p class="center muted">Carregando comparação…</p></div>`;
+  document.body.appendChild(ov);
+  ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+
+  try {
+    const reqs = [api('GET', `/api/pools/${PoolState.slug}/participants/${encodeURIComponent(name)}`)];
+    if (meName && meName !== name) reqs.push(api('GET', `/api/pools/${PoolState.slug}/participants/${encodeURIComponent(meName)}`));
+    const [them, me] = await Promise.all(reqs);
+
+    const matchById = new Map((PoolState.data.matches || []).map((m) => [m.id, m]));
+    const theirs = new Map(them.predictions.map((p) => [p.match_id, p]));
+    const mine = me ? new Map(me.predictions.map((p) => [p.match_id, p])) : null;
+
+    // jogos a mostrar: união dos palpites já iniciados, ordenados por kickoff desc
+    const ids = new Set([...theirs.keys(), ...(mine ? mine.keys() : [])]);
+    const rows = [...ids]
+      .map((id) => matchById.get(id)).filter(Boolean)
+      .filter((m) => m.home_team && m.away_team)
+      .sort((a, b) => new Date(b.kickoff) - new Date(a.kickoff));
+
+    let myPts = 0, theirPts = 0;
+    const body = rows.map((m) => {
+      const tp = theirs.get(m.id), mp = mine ? mine.get(m.id) : null;
+      if (tp) theirPts += tp.points || 0;
+      if (mp) myPts += mp.points || 0;
+      const real = m.finished && m.home_score != null ? `${m.home_score}–${m.away_score}` : (m.home_score != null ? `${m.home_score}–${m.away_score}` : '—');
+      const pick = (p) => p ? `${p.home_score}–${p.away_score}${(m.finished && p.points != null) ? ` <span class="cmp-pts ${p.points ? 'pos' : ''}">+${p.points}</span>` : ''}` : '<span class="muted">—</span>';
+      return `<tr>
+        <td class="cmp-game">${flag(m.home_team)}<span class="cmp-x">×</span>${flag(m.away_team)}<div class="cmp-real">${esc(real)}</div></td>
+        ${mine ? `<td class="num">${pick(mp)}</td>` : ''}
+        <td class="num">${pick(tp)}</td>
+      </tr>`;
+    }).join('');
+
+    ov.querySelector('.cmp-modal').innerHTML = `
+      <div class="row" style="align-items:center;justify-content:space-between">
+        <h3 style="margin:0">⚔️ Comparação</h3>
+        <button class="btn-soft btn-sm" data-close>Fechar</button>
+      </div>
+      ${mine ? `<p class="cmp-tally">Nos jogos já iniciados: <b>${meName}</b> ${myPts} × ${theirPts} <b>${esc(name)}</b> ${myPts > theirPts ? '🟢' : myPts < theirPts ? '🔴' : '🤝'}</p>` : `<p class="muted">Entre no bolão para comparar com seus palpites.</p>`}
+      ${rows.length ? `<div class="board-wrap"><table class="board cmp-table"><thead><tr>
+        <th>Jogo / resultado</th>${mine ? `<th class="num">${esc(meName)}</th>` : ''}<th class="num">${esc(name)}</th>
+      </tr></thead><tbody>${body}</tbody></table></div>`
+        : `<p class="muted">Ainda não há jogos iniciados para comparar.</p>`}`;
+    ov.querySelector('[data-close]').onclick = () => ov.remove();
+  } catch (e) {
+    ov.querySelector('.cmp-modal').innerHTML = `<p class="center">${esc(e.message)}</p>
+      <div class="center" style="margin-top:.6rem"><button class="btn-soft" data-close>Fechar</button></div>`;
+    ov.querySelector('[data-close]').onclick = () => ov.remove();
+  }
+}
+
+// ---------- aba: desempenho (palpites vs resultado) ----------
+function pickReason(pred, m, scoring) {
+  if (!pred) return { label: 'sem palpite', cls: 'miss', icon: '➖' };
+  const ph = pred.home_score, pa = pred.away_score, rh = m.home_score, ra = m.away_score;
+  if (ph === rh && pa === ra) return { label: `placar exato +${scoring.pts_exact}`, cls: 'exact', icon: '🎯' };
+  if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return { label: 'errou', cls: 'wrong', icon: '❌' };
+  if (ph - pa === rh - ra) return { label: `vencedor + saldo +${scoring.pts_goaldiff}`, cls: 'gd', icon: '↔️' };
+  return { label: `vencedor +${scoring.pts_outcome}`, cls: 'out', icon: '✅' };
+}
+
+async function renderDesempenho() {
+  const view = $('#tabview');
+  if (!PoolState.me) {
+    view.innerHTML = `<div class="card center"><h3>📈 Desempenho</h3>
+      <p class="muted">Entre no bolão para acompanhar seus acertos jogo a jogo.</p>
+      <button class="btn-primary" id="go-palpites">Ir para Meus palpites</button></div>`;
+    const b = $('#go-palpites'); if (b) b.onclick = () => { PoolState.tab = 'palpites'; drawPoolShell(); };
+    return;
+  }
+
+  view.innerHTML = `<div class="card center"><p>Carregando seu desempenho…</p></div>`;
+  let mine;
+  try {
+    mine = await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token });
+  } catch (e) {
+    store.clearPart(PoolState.slug); PoolState.me = null;
+    view.innerHTML = `<div class="card center">${esc(e.message)}</div>`;
+    return;
+  }
+
+  const scoring = PoolState.data.pool.scoring;
+  const matches = PoolState.data.matches || [];
+  const locks = PoolState.data.stageLocks || {};
+  const globalLocked = !!(PoolState.data.lock && PoolState.data.lock.locked);
+  const preds = new Map(mine.predictions.map((p) => [p.match_id, p]));
+  const now = Date.now();
+
+  const finished = matches.filter((m) => m.finished && m.home_score != null).sort((a, b) => new Date(b.kickoff) - new Date(a.kickoff));
+  const live = matches.filter((m) => !m.finished && new Date(m.kickoff).getTime() <= now && m.home_team && m.away_team);
+  const isOpenForPick = (m) => m.home_team && m.away_team && !m.finished && new Date(m.kickoff).getTime() > now && !locks[m.stage] && !globalLocked;
+  const missing = matches.filter(isOpenForPick).filter((m) => !preds.has(m.id));
+
+  // métricas
+  let exatos = 0, ptsGames = 0, maxGames = 0, acertos = 0;
+  for (const m of finished) {
+    const p = preds.get(m.id);
+    maxGames += scoring.pts_exact;
+    if (p) {
+      ptsGames += p.points || 0;
+      if (p.points > 0) acertos++;
+      if (p.home_score === m.home_score && p.away_score === m.away_score) exatos++;
+    }
+  }
+  const qualPts = mine.qualifiers.reduce((s, q) => s + q.points, 0);
+  const aprov = maxGames ? Math.round((ptsGames / maxGames) * 100) : 0;
+  const withPick = finished.filter((m) => preds.has(m.id)).length;
+
+  let html = `
+    <div class="card">
+      <div class="row" style="align-items:center">
+        <div><b>📈 ${esc(mine.name)}</b></div>
+        <div style="text-align:right;flex:0"><button class="btn-soft btn-sm" id="btn-share">📸 Compartilhar</button></div>
+      </div>
+      <div class="perf-grid">
+        <div class="perf-stat"><span class="pv">${mine.total}</span><span class="pl">Pontos</span></div>
+        <div class="perf-stat"><span class="pv">🎯 ${exatos}</span><span class="pl">Placares exatos</span></div>
+        <div class="perf-stat"><span class="pv">${acertos}/${withPick}</span><span class="pl">Jogos pontuados</span></div>
+        <div class="perf-stat"><span class="pv">${aprov}%</span><span class="pl">Aproveitamento</span></div>
+        <div class="perf-stat"><span class="pv">🏆 ${qualPts}</span><span class="pl">Quem avança</span></div>
+      </div>
+    </div>`;
+
+  if (live.length) {
+    html += `<div class="card live-card"><h3><span class="live-dot"></span>Ao vivo / em jogo agora</h3>
+      ${live.map((m) => {
+        const p = preds.get(m.id);
+        const real = m.home_score != null ? `${m.home_score} x ${m.away_score}` : '—';
+        return `<div class="perf-row live">
+          <div class="pr-game">${flag(m.home_team)} ${esc(m.home_team)} <span class="cmp-x">×</span> ${esc(m.away_team)} ${flag(m.away_team)}</div>
+          <div class="pr-mid"><span class="pill live">${real}</span></div>
+          <div class="pr-pick">${p ? `seu: <b>${p.home_score} x ${p.away_score}</b>` : '<span class="muted">sem palpite</span>'}</div>
+        </div>`;
+      }).join('')}</div>`;
+  }
+
+  if (missing.length && !globalLocked) {
+    html += `<div class="card missing-card"><h3>⚠️ Palpites faltando (${missing.length})</h3>
+      <p class="muted">Jogos abertos que você ainda não palpitou:</p>
+      <div class="miss-list">${missing.slice(0, 12).map((m) => `<span class="miss-chip">${flag(m.home_team)} ${esc(m.home_team)} × ${esc(m.away_team)} ${flag(m.away_team)}</span>`).join('')}</div>
+      ${missing.length > 12 ? `<p class="muted">…e mais ${missing.length - 12}.</p>` : ''}
+      <button class="btn-soft btn-sm" id="go-fill">Ir palpitar</button></div>`;
+  }
+
+  if (finished.length) {
+    html += `<div class="card"><h3>🧾 Palpites × Resultado</h3>
+      <div class="perf-list">${finished.map((m) => {
+        const p = preds.get(m.id);
+        const r = pickReason(p, m, scoring);
+        return `<div class="perf-row">
+          <div class="pr-game">${flag(m.home_team)} ${esc(m.home_team)} <span class="cmp-x">×</span> ${esc(m.away_team)} ${flag(m.away_team)}
+            <div class="muted pr-date">${esc(m.round_label || '')}</div></div>
+          <div class="pr-mid">
+            <span class="pr-real">${m.home_score} x ${m.away_score}</span>
+            <span class="pr-yours">${p ? `${p.home_score} x ${p.away_score}` : '—'}</span>
+          </div>
+          <div class="pr-pick"><span class="reason ${r.cls}">${r.icon} ${esc(r.label)}</span></div>
+        </div>`;
+      }).join('')}</div></div>`;
+  } else {
+    html += `<div class="card center"><p class="muted">Nenhum jogo encerrado ainda. Seu placar exato e aproveitamento aparecem aqui conforme a Copa rola.</p></div>`;
+  }
+
+  view.innerHTML = html;
+  const sh = $('#btn-share'); if (sh) sh.onclick = () => shareCard({ name: mine.name, total: mine.total, exatos, aprov, qualPts, poolName: PoolState.data.pool.name });
+  const gf = $('#go-fill'); if (gf) gf.onclick = () => { PoolState.tab = 'palpites'; drawPoolShell(); };
+}
+
+// Gera um card (imagem) com o resumo do participante para mandar no grupo.
+async function shareCard(s) {
+  const W = 1080, H = 1080;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#0c6e38'); grad.addColorStop(0.55, '#075c2c'); grad.addColorStop(1, '#043d1d');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(60, 60, W - 120, H - 120);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffcb05'; ctx.font = 'bold 54px Segoe UI, system-ui, sans-serif';
+  ctx.fillText('⚽ BOLÃO DA COPA 2026', W / 2, 170);
+  ctx.fillStyle = '#e9f1ec'; ctx.font = '34px Segoe UI, system-ui, sans-serif';
+  ctx.fillText(s.poolName.slice(0, 38), W / 2, 230);
+
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 76px Segoe UI, system-ui, sans-serif';
+  ctx.fillText(s.name.slice(0, 22), W / 2, 380);
+
+  ctx.fillStyle = '#ffcb05'; ctx.font = 'bold 200px Segoe UI, system-ui, sans-serif';
+  ctx.fillText(String(s.total), W / 2, 640);
+  ctx.fillStyle = '#cfe9d9'; ctx.font = '40px Segoe UI, system-ui, sans-serif';
+  ctx.fillText('PONTOS', W / 2, 710);
+
+  const stats = [['🎯 Exatos', s.exatos], ['📈 Aproveit.', s.aprov + '%'], ['🏆 Avanço', s.qualPts]];
+  const bw = 280, gap = 30, totalW = bw * 3 + gap * 2, x0 = (W - totalW) / 2, y = 800;
+  stats.forEach(([label, val], i) => {
+    const x = x0 + i * (bw + gap);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; roundRect(ctx, x, y, bw, 180, 22); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 64px Segoe UI, system-ui, sans-serif';
+    ctx.fillText(String(val), x + bw / 2, y + 90);
+    ctx.fillStyle = '#cfe9d9'; ctx.font = '30px Segoe UI, system-ui, sans-serif';
+    ctx.fillText(label, x + bw / 2, y + 140);
+  });
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '28px Segoe UI, system-ui, sans-serif';
+  ctx.fillText('bolaodobonde.vercel.app', W / 2, 1030);
+
+  cv.toBlob(async (blob) => {
+    if (!blob) return toast('Não consegui gerar a imagem.', true);
+    const file = new File([blob], 'meu-bolao.png', { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'Meu bolão da Copa 2026' }); return; } catch (_) { /* cancelou */ }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'meu-bolao.png'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('📸 Card salvo! Mande no grupo.');
+  }, 'image/png');
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 // ---------- aba: admin ----------
