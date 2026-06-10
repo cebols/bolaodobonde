@@ -928,7 +928,7 @@ async function renderRanking() {
       ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''} board-row" data-name="${esc(r.name)}">
         <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
         ${hasMoves ? `<td class="num">${moveBadge(deltaByName.get(r.name) ?? 0)}</td>` : ''}
-        <td><span class="name-cell">${avatarImg(r.avatar, r.name, 'av sm')}<span class="nm">${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span></td>
+        <td><span class="name-cell">${avatarImg(r.avatar, r.name, 'av rk')}<span class="nm">${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span></td>
         <td class="num">${r.match_pts}</td><td class="num">${r.qual_pts}</td>
         <td class="num">${r.exatos}</td><td class="num"><b>${r.total}</b></td>
       </tr>`).join('')}
