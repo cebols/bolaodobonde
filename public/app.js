@@ -1258,17 +1258,21 @@ function partidaCard(m) {
 }
 
 const localDay = (d) => new Date(d).toLocaleDateString('en-CA'); // YYYY-MM-DD local
+const MONTHS_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const WEEKDAYS_PT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 // Barra "Próximos jogos": jogos de hoje e amanhã ainda não encerrados.
 function upcomingBarHtml(list, todayStr) {
   if (!list.length) return `<div class="upcoming-wrap"><div class="upcoming empty muted">Sem jogos hoje ou amanhã. 😴</div></div>`;
   return `<div class="upcoming-wrap">
     <div class="upcoming">${list.map((m) => {
+      const d = new Date(m.kickoff);
       const tag = localDay(m.kickoff) === todayStr ? 'Hoje' : 'Amanhã';
-      const t = new Date(m.kickoff).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      const liveNow = !m.finished && new Date(m.kickoff).getTime() <= Date.now();
+      const ds = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' });
+      const t = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const liveNow = !m.finished && d.getTime() <= Date.now();
       return `<button class="up-chip" data-goto="${m.id}">
-        <span class="up-when">${liveNow ? '<span class="live-dot"></span>AO VIVO' : `${tag} · ${esc(t)}`}</span>
+        <span class="up-when">${liveNow ? '<span class="live-dot"></span>AO VIVO' : `${tag} · ${esc(ds)} · ${esc(t)}`}</span>
         <span class="up-teams">${flag(m.home_team)} ${esc(m.home_team)} <span class="cmp-x">×</span> ${esc(m.away_team)} ${flag(m.away_team)}</span>
       </button>`;
     }).join('')}</div>
@@ -1278,7 +1282,8 @@ function upcomingBarHtml(list, todayStr) {
 function renderPartidas() {
   const view = $('#tabview');
   const matches = (PoolState.data.matches || []).slice().sort((a, b) => a.ord - b.ord);
-  const stages = ['group', 'r32', 'r16', 'qf', 'sf', 'third', 'final'];
+  if (!PoolState.partidasView) PoolState.partidasView = 'list';
+  const cal = PoolState.partidasView === 'cal';
 
   // próximos: hoje + amanhã, ainda não encerrados
   const now = new Date();
@@ -1291,15 +1296,54 @@ function renderPartidas() {
     .sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
 
   let html = `<div class="card"><h3>📅 Todas as partidas</h3>
-    <p class="muted">Toque num jogo para ver os palpites da galera (revelados quando o jogo começa). Use a busca pra achar uma seleção.</p></div>`;
+    <p class="muted">Toque num jogo para ver os palpites da galera (revelados quando o jogo começa). Veja em lista ou no calendário.</p></div>`;
 
-  html += `<div class="partidas-bar">
+  html += `<div class="partidas-bar ${cal ? 'cal-mode' : ''}">
+    <div class="pview-toggle">
+      <button data-pv="list" class="${cal ? '' : 'active'}">📋 Lista</button>
+      <button data-pv="cal" class="${cal ? 'active' : ''}">📅 Calendário</button>
+    </div>
     <div class="search-row"><input id="match-search" type="search" inputmode="search" autocomplete="off" placeholder="🔎 Buscar seleção (ex.: Brasil, França…)" /></div>
     <div class="upcoming-h muted">⏭️ Próximos jogos</div>
     ${upcomingBarHtml(upcoming, todayStr)}
   </div>`;
 
-  html += `<div id="partidas-list">`;
+  html += `<div id="partidas-content"></div>`;
+  view.innerHTML = html;
+
+  const content = $('#partidas-content');
+  if (cal) renderCalendar(matches, content);
+  else renderPartidasList(matches, content);
+
+  // alternar lista/calendário
+  view.querySelectorAll('[data-pv]').forEach((b) => { b.onclick = () => { PoolState.partidasView = b.dataset.pv; renderPartidas(); }; });
+
+  // busca (só na lista)
+  const search = $('#match-search');
+  const applyFilter = () => {
+    const q = normStr(search.value);
+    content.querySelectorAll('.pcard').forEach((c) => { c.hidden = !!q && !(c.dataset.search || '').includes(q); });
+    content.querySelectorAll('.pmatch-block').forEach((b) => { b.hidden = ![...b.querySelectorAll('.pcard')].some((c) => !c.hidden); });
+    content.querySelectorAll('.pstage').forEach((s) => { s.hidden = ![...s.querySelectorAll('.pmatch-block')].some((b) => !b.hidden); });
+  };
+  if (search) search.oninput = applyFilter;
+
+  // chips "próximos jogos" -> vai pro card (na lista) e abre
+  view.querySelectorAll('.up-chip').forEach((b) => {
+    b.onclick = () => {
+      if (PoolState.partidasView !== 'list') { PoolState.partidasView = 'list'; renderPartidas(); }
+      const cont = $('#partidas-content');
+      const s = $('#match-search'); if (s && s.value) s.value = '';
+      const card = cont.querySelector(`.pcard[data-match-id="${b.dataset.goto}"]`);
+      if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (!card.classList.contains('open')) togglePartida(card); }
+    };
+  });
+}
+
+// Lista de jogos agrupada por fase/grupo/dia (com cards expansíveis).
+function renderPartidasList(matches, content) {
+  const stages = ['group', 'r32', 'r16', 'qf', 'sf', 'third', 'final'];
+  let html = '';
   for (const stage of stages) {
     const list = matches.filter((m) => m.stage === stage);
     if (!list.length) continue;
@@ -1322,28 +1366,53 @@ function renderPartidas() {
     }
     html += `</div>`;
   }
+  content.innerHTML = html;
+  content.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
+}
+
+// Calendário mensal: grade dom–sáb com os dias que têm jogos; o dia selecionado
+// abre embaixo a lista de partidas daquele dia.
+function renderCalendar(matches, content) {
+  const byDay = {};
+  for (const m of matches) { const k = localDay(m.kickoff); (byDay[k] = byDay[k] || []).push(m); }
+  const days = Object.keys(byDay).sort();
+  if (!days.length) { content.innerHTML = `<div class="card center muted">Nenhum jogo agendado.</div>`; return; }
+  const todayStr = localDay(new Date());
+  if (!PoolState.calDay || !byDay[PoolState.calDay]) {
+    PoolState.calDay = byDay[todayStr] ? todayStr : (days.find((d) => d >= todayStr) || days[days.length - 1]);
+  }
+
+  const months = [...new Set(days.map((d) => d.slice(0, 7)))]; // "2026-06"
+  let html = `<div class="card cal-card">`;
+  for (const ym of months) {
+    const [y, mo] = ym.split('-').map(Number);
+    const firstWd = new Date(y, mo - 1, 1).getDay();
+    const dim = new Date(y, mo, 0).getDate();
+    html += `<div class="cal-month"><h3 class="cal-title">${MONTHS_PT[mo - 1]} ${y}</h3>
+      <div class="cal-grid">${WEEKDAYS_PT.map((w) => `<div class="cal-wd">${w}</div>`).join('')}`;
+    for (let i = 0; i < firstWd; i++) html += `<div class="cal-cell empty"></div>`;
+    for (let d = 1; d <= dim; d++) {
+      const ds = `${ym}-${String(d).padStart(2, '0')}`;
+      const games = byDay[ds];
+      const cls = ['cal-cell', games ? 'has' : '', ds === PoolState.calDay ? 'sel' : '', ds === todayStr ? 'today' : ''].filter(Boolean).join(' ');
+      html += `<button class="${cls}" ${games ? `data-calday="${ds}"` : 'disabled'}>
+        <span class="cal-d">${d}</span>${games ? `<span class="cal-dot">${games.length}</span>` : ''}
+      </button>`;
+    }
+    html += `</div></div>`;
+  }
   html += `</div>`;
-  view.innerHTML = html;
 
-  const listEl = $('#partidas-list');
-  const search = $('#match-search');
-  const applyFilter = () => {
-    const q = normStr(search.value);
-    listEl.querySelectorAll('.pcard').forEach((c) => { c.hidden = !!q && !(c.dataset.search || '').includes(q); });
-    listEl.querySelectorAll('.pmatch-block').forEach((b) => { b.hidden = ![...b.querySelectorAll('.pcard')].some((c) => !c.hidden); });
-    listEl.querySelectorAll('.pstage').forEach((s) => { s.hidden = ![...s.querySelectorAll('.pmatch-block')].some((b) => !b.hidden); });
-  };
-  search.oninput = applyFilter;
+  const sel = byDay[PoolState.calDay] || [];
+  const selLabel = new Date(PoolState.calDay + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+  html += `<div class="card"><h3>📆 <span style="text-transform:capitalize">${esc(selLabel)}</span> <span class="muted">· ${sel.length} jogo(s)</span></h3>
+    <div id="cal-day-list">${sel.map(partidaCard).join('')}</div></div>`;
 
-  view.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
-
-  view.querySelectorAll('.up-chip').forEach((b) => {
-    b.onclick = () => {
-      if (search.value) { search.value = ''; applyFilter(); }
-      const card = listEl.querySelector(`.pcard[data-match-id="${b.dataset.goto}"]`);
-      if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (!card.classList.contains('open')) togglePartida(card); }
-    };
+  content.innerHTML = html;
+  content.querySelectorAll('[data-calday]').forEach((b) => {
+    b.onclick = () => { PoolState.calDay = b.dataset.calday; renderCalendar(matches, content); };
   });
+  content.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
 }
 
 async function togglePartida(card) {
