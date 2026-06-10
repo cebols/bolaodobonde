@@ -106,15 +106,9 @@ button:disabled { opacity: 0.6; cursor: default; }
 .btn-soft.active { background: var(--green); color: #fff; border-color: var(--green); }
 
 /* ---------- tabs ---------- */
-.tabs {
-  display: flex; gap: 0.4rem; margin-bottom: 1rem;
-  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
-  position: sticky; top: 51px; z-index: 15; padding: 0.55rem 0; background: var(--bg);
-  scroll-snap-type: x proximity;
-}
-.tabs::-webkit-scrollbar { display: none; }
+.tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
 .tabs button {
-  flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start;
+  flex: 1 1 auto; white-space: nowrap; padding: 0.55rem 0.7rem;
   background: var(--card); border: 1px solid var(--line); color: var(--muted);
 }
 .tabs button.active { background: var(--green); color: #fff; border-color: var(--green); }
@@ -192,7 +186,7 @@ table.stand tr.q3 td.pos { color: var(--gold); }
 
 /* nav lateral dos grupos */
 .group-nav {
-  position: sticky; top: 108px; z-index: 9; display: flex; gap: 0.35rem; overflow-x: auto;
+  position: sticky; top: 52px; z-index: 9; display: flex; gap: 0.35rem; overflow-x: auto;
   padding: 0.4rem 0.1rem; margin-bottom: 0.4rem; background: var(--bg);
   -webkit-overflow-scrolling: touch; scrollbar-width: thin;
 }
@@ -378,15 +372,16 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .pcard.done { border-color: #2a6f48; }
 .pcard.open { border-color: var(--green); }
 .pcard-head {
-  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  background: transparent; border: none; color: var(--ink); text-align: left; padding: 0.6rem 0.7rem;
+  width: 100%; position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+  background: transparent; border: none; color: var(--ink); text-align: center; padding: 0.6rem 1.6rem;
 }
-.pc-teams { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
-.pc-side { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; font-size: 0.9rem; min-width: 0; }
-.pc-side span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pc-vs { color: var(--muted); font-size: 0.68rem; margin: 0.05rem 0; }
-.pc-meta { display: flex; align-items: center; gap: 0.45rem; flex: 0 0 auto; }
-.pc-caret { color: var(--muted); transition: transform .2s; font-size: 0.8rem; }
+.pc-row { display: flex; align-items: center; justify-content: center; gap: 0.5rem; flex-wrap: wrap; font-weight: 600; font-size: 0.92rem; }
+.pc-t { display: inline-flex; align-items: center; gap: 0.35rem; }
+.pc-x { color: var(--muted); font-size: 0.78rem; }
+.pc-info { font-size: 0.78rem; color: var(--muted); display: inline-flex; align-items: center; gap: 0.3rem; }
+.pc-info.live { color: var(--danger); font-weight: 700; }
+.pc-info.done { color: var(--gold); font-weight: 700; }
+.pc-caret { position: absolute; right: 0.6rem; top: 0.6rem; color: var(--muted); transition: transform .2s; font-size: 0.8rem; }
 .pcard.open .pc-caret { transform: rotate(180deg); }
 .pcard-panel { padding: 0 0.7rem 0.7rem; }
 .ppanel-lock { background: var(--bg2); border-radius: 10px; padding: 0.7rem; text-align: center; color: var(--muted); font-size: 0.88rem; }
@@ -401,7 +396,7 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 
 /* ---------- partidas: busca + próximos jogos ---------- */
 .partidas-bar {
-  position: sticky; top: 106px; z-index: 8; background: var(--bg);
+  position: sticky; top: 52px; z-index: 8; background: var(--bg);
   padding: 0.5rem 0 0.5rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--line);
 }
 .search-row input[type=search] { width: 100%; }
@@ -411,22 +406,22 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .pview-toggle button.active { background: var(--green); color: #fff; border-color: var(--green); }
 
 /* calendário */
-.cal-month { margin-bottom: 0.6rem; }
-.cal-title { text-align: center; font-size: 1rem; margin: 0.2rem 0 0.6rem; }
-.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.cal-wd { text-align: center; font-size: 0.64rem; color: var(--muted); font-weight: 700; padding: 0.15rem 0; text-transform: uppercase; }
+.cal-month { margin-bottom: 0.7rem; }
+.cal-title { text-align: center; font-size: 0.95rem; margin: 0.2rem 0 0.5rem; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; max-width: 340px; margin: 0 auto; }
+.cal-wd { text-align: center; font-size: 0.6rem; color: var(--muted); font-weight: 700; padding: 0.1rem 0; text-transform: uppercase; }
 .cal-cell {
-  aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  background: var(--card2); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 0; min-height: 40px;
+  aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: var(--card2); border: 1px solid var(--line); border-radius: 7px; color: var(--ink); padding: 0;
 }
 .cal-cell.empty { background: transparent; border: none; }
-.cal-cell:disabled { opacity: 0.35; cursor: default; }
+.cal-cell:disabled { opacity: 0.3; cursor: default; }
 .cal-cell.has { cursor: pointer; }
 .cal-cell.has:hover { border-color: var(--green); }
 .cal-cell.today { box-shadow: inset 0 0 0 2px var(--gold); }
 .cal-cell.sel { background: var(--green); border-color: var(--green); color: #fff; }
-.cal-d { font-size: 0.85rem; font-weight: 700; }
-.cal-dot { font-size: 0.6rem; font-weight: 800; background: var(--green-dark); color: #fff; border-radius: 999px; min-width: 1.05rem; padding: 0 0.2rem; line-height: 1.25; }
+.cal-d { font-size: 0.78rem; font-weight: 700; }
+.cal-dot { font-size: 0.55rem; font-weight: 800; background: var(--green-dark); color: #fff; border-radius: 999px; min-width: 0.95rem; padding: 0 0.15rem; line-height: 1.3; }
 .cal-cell.sel .cal-dot { background: rgba(255,255,255,0.32); }
 .upcoming-h { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin: 0.5rem 0 0.3rem; }
 .upcoming { display: flex; gap: 0.4rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-bottom: 0.2rem; }

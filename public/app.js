@@ -343,7 +343,7 @@ function drawPoolShell() {
   const { data } = PoolState;
   const isAdmin = data.isAdmin;
   const tabs = [
-    ['palpites', '🎯 Meus palpites'],
+    ['palpites', '🎯 Palpites'],
     ['desempenho', '📈 Desempenho'],
     ['partidas', '📅 Partidas'],
     ['chave', '🗝️ Chave'],
@@ -1239,6 +1239,22 @@ function matchStatus(m) {
   return { cls: 'sched', pill: `<span class="pill tbd">${esc(fmtDate(m.kickoff))}</span>` };
 }
 
+const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
+// Linha de info do card: data "Quinta-feira, 11/06 · 13h" ou estado (ao vivo/encerrado).
+function matchInfoLine(m) {
+  const d = new Date(m.kickoff);
+  if (m.finished) return `✅ Encerrado · ${m.home_score} x ${m.away_score}`;
+  const started = d.getTime() <= Date.now();
+  if (started && m.home_score != null) return `<span class="live-dot"></span>Ao vivo · ${m.home_score} x ${m.away_score}`;
+  if (started) return `<span class="live-dot"></span>Em jogo`;
+  const wd = d.toLocaleDateString('pt-BR', { weekday: 'long' });
+  const dm = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const mm = d.getMinutes();
+  const hr = mm ? `${d.getHours()}h${String(mm).padStart(2, '0')}` : `${d.getHours()}h`;
+  return `${cap(wd)}, ${dm} · ${hr}`;
+}
+
 function partidaCard(m) {
   const home = m.home_team ? `${flag(m.home_team)} <span>${esc(m.home_team)}</span>` : `<span class="tbd-team">${esc(m.home_label || 'A definir')}</span>`;
   const away = m.away_team ? `${flag(m.away_team)} <span>${esc(m.away_team)}</span>` : `<span class="tbd-team">${esc(m.away_label || 'A definir')}</span>`;
@@ -1246,12 +1262,13 @@ function partidaCard(m) {
   const searchText = normStr([m.home_team, m.away_team, m.home_label, m.away_label, m.group_label, m.round_label].filter(Boolean).join(' '));
   return `<div class="pcard ${st.cls}" data-match-id="${m.id}" data-search="${esc(searchText)}">
     <button class="pcard-head">
-      <div class="pc-teams">
-        <span class="pc-side">${home}</span>
-        <span class="pc-vs">×</span>
-        <span class="pc-side">${away}</span>
+      <span class="pc-caret" aria-hidden="true">▾</span>
+      <div class="pc-row">
+        <span class="pc-t">${home}</span>
+        <span class="pc-x">×</span>
+        <span class="pc-t">${away}</span>
       </div>
-      <div class="pc-meta">${st.pill}<span class="pc-caret" aria-hidden="true">▾</span></div>
+      <div class="pc-info ${st.cls}">${matchInfoLine(m)}</div>
     </button>
     <div class="pcard-panel" hidden></div>
   </div>`;
@@ -1383,23 +1400,35 @@ function renderCalendar(matches, content) {
   }
 
   const months = [...new Set(days.map((d) => d.slice(0, 7)))]; // "2026-06"
+  const cellHtml = (cell) => {
+    if (!cell) return `<div class="cal-cell empty"></div>`;
+    const { d, ds, games } = cell;
+    const cls = ['cal-cell', games ? 'has' : '', ds === PoolState.calDay ? 'sel' : '', ds === todayStr ? 'today' : ''].filter(Boolean).join(' ');
+    return `<button class="${cls}" ${games ? `data-calday="${ds}"` : 'disabled'}>
+      <span class="cal-d">${d}</span>${games ? `<span class="cal-dot">${games.length}</span>` : ''}
+    </button>`;
+  };
   let html = `<div class="card cal-card">`;
   for (const ym of months) {
     const [y, mo] = ym.split('-').map(Number);
     const firstWd = new Date(y, mo - 1, 1).getDay();
     const dim = new Date(y, mo, 0).getDate();
+    // monta as células (com brancos no início) e quebra em semanas
+    const cells = [];
+    for (let i = 0; i < firstWd; i++) cells.push(null);
+    for (let d = 1; d <= dim; d++) { const ds = `${ym}-${String(d).padStart(2, '0')}`; cells.push({ d, ds, games: byDay[ds] }); }
+    while (cells.length % 7) cells.push(null);
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+    // mantém só da 1ª à última semana que tem jogo (elimina semanas vazias nas pontas)
+    const hasGame = (wk) => wk.some((c) => c && c.games);
+    const fi = weeks.findIndex(hasGame);
+    if (fi < 0) continue;
+    let li = weeks.length - 1; while (li > fi && !hasGame(weeks[li])) li--;
+    const shown = weeks.slice(fi, li + 1);
     html += `<div class="cal-month"><h3 class="cal-title">${MONTHS_PT[mo - 1]} ${y}</h3>
-      <div class="cal-grid">${WEEKDAYS_PT.map((w) => `<div class="cal-wd">${w}</div>`).join('')}`;
-    for (let i = 0; i < firstWd; i++) html += `<div class="cal-cell empty"></div>`;
-    for (let d = 1; d <= dim; d++) {
-      const ds = `${ym}-${String(d).padStart(2, '0')}`;
-      const games = byDay[ds];
-      const cls = ['cal-cell', games ? 'has' : '', ds === PoolState.calDay ? 'sel' : '', ds === todayStr ? 'today' : ''].filter(Boolean).join(' ');
-      html += `<button class="${cls}" ${games ? `data-calday="${ds}"` : 'disabled'}>
-        <span class="cal-d">${d}</span>${games ? `<span class="cal-dot">${games.length}</span>` : ''}
-      </button>`;
-    }
-    html += `</div></div>`;
+      <div class="cal-grid">${WEEKDAYS_PT.map((w) => `<div class="cal-wd">${w}</div>`).join('')}
+      ${shown.flat().map(cellHtml).join('')}</div></div>`;
   }
   html += `</div>`;
 
@@ -1557,7 +1586,8 @@ async function renderAdmin() {
     syncBtn.disabled = true; syncBtn.textContent = 'Sincronizando…';
     try {
       const r = await api('POST', `/api/pools/${PoolState.slug}/sync`, {}, { 'x-admin-token': adminToken });
-      toast(r.error ? r.error : `✅ ${r.updated || 0} jogo(s) atualizado(s).`, !!r.error);
+      const extra = r.redated ? ` · ${r.redated} data(s) corrigida(s)` : '';
+      toast(r.error ? r.error : `✅ ${r.updated || 0} placar(es) atualizado(s)${extra}.`, !!r.error);
       PoolState.data = await api('GET', `/api/pools/${PoolState.slug}`, null, { 'x-admin-token': adminToken });
       drawPoolShell();
     } catch (e) { toast(e.message, true); }

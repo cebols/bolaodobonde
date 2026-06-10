@@ -78,13 +78,21 @@ export async function syncPool(pool, { force = false } = {}) {
 
   const rows = await all('SELECT * FROM matches WHERE pool_id = $1', [pool.id]);
   const touchedGroups = new Set();
-  let updated = 0;
+  let updated = 0, redated = 0;
 
   for (const fd of list) {
-    const sc = scoreOf(fd);
-    if (!sc) continue;
     const m = findMatch(rows, fd);
     if (!m) continue;
+    // Data/hora oficial da partida (corrige os horários aproximados semeados).
+    if (fd.utcDate && !Number.isNaN(Date.parse(fd.utcDate))) {
+      const iso = new Date(fd.utcDate).toISOString();
+      if (m.kickoff !== iso) {
+        await run('UPDATE matches SET kickoff = $1 WHERE id = $2', [iso, m.id]);
+        m.kickoff = iso; redated++;
+      }
+    }
+    const sc = scoreOf(fd);
+    if (!sc) continue;
     const fin = sc.finished ? 1 : 0;
     if (m.home_score === sc.h && m.away_score === sc.a && (m.finished ? 1 : 0) === fin) continue;
     await run('UPDATE matches SET home_score = $1, away_score = $2, finished = $3 WHERE id = $4',
@@ -97,7 +105,7 @@ export async function syncPool(pool, { force = false } = {}) {
   if (touchedGroups.size) await recomputeAdvanceAll(pool.id);
   if (updated) await resolveKnockout(pool.id); // preenche o chaveamento
   await run('UPDATE pools SET synced_at = $1 WHERE id = $2', [new Date().toISOString(), pool.id]);
-  return { updated };
+  return { updated, redated };
 }
 
 // Atalho usado nos GETs: tenta sincronizar sem travar a resposta por muito tempo.
