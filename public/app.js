@@ -44,6 +44,19 @@ function flag(t) {
 // Emoji (usado só dentro de <option>, onde imagem não vale).
 const flagEmoji = (t) => (t && META.flags[t]) ? META.flags[t] : '⚪';
 
+// Cor estável a partir do nome (para o placeholder de avatar).
+function avColor(name) {
+  let h = 0; const s = String(name || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h} 42% 34%)`;
+}
+// Foto do participante (ou iniciais coloridas se não tiver).
+function avatarImg(url, name, cls = 'av') {
+  if (url) return `<img class="${cls}" loading="lazy" alt="" src="${esc(url)}" />`;
+  const initials = String(name || '?').trim().split(/\s+/).map((w) => w[0] || '').slice(0, 2).join('').toUpperCase() || '?';
+  return `<span class="${cls} av-ph" style="background:${avColor(name)}">${esc(initials)}</span>`;
+}
+
 function toast(msg, isErr = false) {
   const t = $('#toast');
   t.textContent = msg; t.className = 'toast show' + (isErr ? ' err' : '');
@@ -133,6 +146,7 @@ function groupTableJS(teams, games) {
 // ---------------- router ----------------
 window.addEventListener('hashchange', route);
 window.addEventListener('DOMContentLoaded', async () => {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   try { META = await api('GET', '/api/meta'); } catch (_) {}
   // Login persistente: sem rota explícita, volta direto pro bolão "casa" se ainda logado.
   if (!location.hash) {
@@ -246,7 +260,9 @@ let POLL_HANDLE = null;
 function stopPolling() { if (POLL_HANDLE) { clearInterval(POLL_HANDLE); POLL_HANDLE = null; } }
 function startPolling() {
   stopPolling();
+  remindersTick();
   POLL_HANDLE = setInterval(async () => {
+    remindersTick(); // roda mesmo com a aba em segundo plano
     if (document.hidden || !PoolState.slug) return;
     try {
       const adminToken = store.getAdmin(PoolState.slug);
@@ -258,6 +274,66 @@ function startPolling() {
       // aba "palpites" não é re-renderizada para não apagar o que está sendo digitado.
     } catch (_) { /* silencioso */ }
   }, 60000);
+}
+
+// ---------- lembretes de jogos (notificação local, ~10 min antes) ----------
+const REMIND_LEAD_MS = 10 * 60 * 1000;
+const remindOn = () => localStorage.getItem('bolao_remind') === '1';
+function notifiedSet() { try { return new Set(JSON.parse(localStorage.getItem('bolao_notified') || '[]')); } catch (_) { return new Set(); } }
+function markNotified(id) { const s = notifiedSet(); s.add(id); localStorage.setItem('bolao_notified', JSON.stringify([...s].slice(-300))); }
+
+function refreshRemindBtn() {
+  const b = $('#btn-remind'); if (!b) return;
+  const on = remindOn() && (typeof Notification !== 'undefined') && Notification.permission === 'granted';
+  b.textContent = on ? '🔔 Lembretes ligados' : '🔕 Lembretes de jogos';
+  b.classList.toggle('active', on);
+}
+
+async function toggleReminders() {
+  if (typeof Notification === 'undefined') return toast('Seu navegador não suporta notificações.', true);
+  if (remindOn() && Notification.permission === 'granted') {
+    localStorage.setItem('bolao_remind', '0');
+    toast('🔕 Lembretes desligados.');
+    refreshRemindBtn();
+    return;
+  }
+  let perm = Notification.permission;
+  if (perm !== 'granted') { try { perm = await Notification.requestPermission(); } catch (_) {} }
+  if (perm !== 'granted') {
+    toast('Permissão de notificação negada. Ative nas configurações do navegador.', true);
+    return;
+  }
+  localStorage.setItem('bolao_remind', '1');
+  toast('🔔 Pronto! Vou te avisar ~10 min antes de cada jogo (com o app aberto/instalado).');
+  refreshRemindBtn();
+  remindersTick();
+}
+
+async function showLocalNotification(title, body) {
+  const opts = { body, icon: '/icon.svg', badge: '/icon.svg', tag: title, data: { url: location.href } };
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (reg && reg.showNotification) { await reg.showNotification(title, opts); return; }
+  } catch (_) {}
+  try { new Notification(title, opts); } catch (_) {}
+}
+
+function remindersTick() {
+  if (!remindOn() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  if (!PoolState.data || !PoolState.data.matches) return;
+  const now = Date.now();
+  const done = notifiedSet();
+  for (const m of PoolState.data.matches) {
+    if (!m.home_team || !m.away_team || m.finished) continue;
+    const ko = new Date(m.kickoff).getTime();
+    if (Number.isNaN(ko)) continue;
+    const ms = ko - now;
+    if (ms > 0 && ms <= REMIND_LEAD_MS && !done.has(m.id)) {
+      const mins = Math.max(1, Math.round(ms / 60000));
+      showLocalNotification(`⚽ Começa em ~${mins} min`, `${m.home_team} x ${m.away_team} — não esqueça seu palpite!`);
+      markNotified(m.id);
+    }
+  }
 }
 
 function drawPoolShell() {
@@ -282,6 +358,9 @@ function drawPoolShell() {
         <span>✅ Acertou o vencedor/empate: <b>${data.pool.scoring.pts_outcome}</b></span>
         <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
       </div>
+      <div class="hero-actions">
+        <button id="btn-remind" class="btn-ghost btn-sm">🔔 Lembretes de jogos</button>
+      </div>
     </section>
     <div class="tabs" id="tabs">
       ${tabs.map(([k, label]) => `<button data-tab="${k}" class="${PoolState.tab === k ? 'active' : ''}">${label}</button>`).join('')}
@@ -291,6 +370,8 @@ function drawPoolShell() {
   $('#tabs').querySelectorAll('button').forEach((b) => {
     b.onclick = () => { PoolState.tab = b.dataset.tab; drawPoolShell(); };
   });
+  refreshRemindBtn();
+  const rb = $('#btn-remind'); if (rb) rb.onclick = toggleReminders;
 
   if (PoolState.tab === 'palpites') renderPalpites();
   else if (PoolState.tab === 'desempenho') renderDesempenho();
@@ -755,6 +836,66 @@ function moveBadge(delta) {
   return `<span class="move flat">–</span>`;
 }
 
+// Pódio animado dos 3 primeiros (ordem visual: 2º, 1º, 3º).
+function podiumHtml(board, meName) {
+  if (!board.length) return '';
+  const top = board.slice(0, 3);
+  while (top.length < 3) top.push(null); // preenche pra manter o layout
+  const order = [{ r: 2, h: 'pod-2' }, { r: 1, h: 'pod-1' }, { r: 3, h: 'pod-3' }];
+  const medal = { 1: '🥇', 2: '🥈', 3: '🥉' };
+  const cols = order.map(({ r, h }) => {
+    const p = top[r - 1];
+    if (!p) return `<div class="pod-col ${h} empty"><div class="pod-bar"><span class="pod-pos">${r}º</span></div></div>`;
+    return `<div class="pod-col ${h}" data-name="${esc(p.name)}">
+      <div class="pod-person">
+        ${avatarImg(p.avatar, p.name, 'av pod-av')}
+        <div class="pod-name ${p.name === meName ? 'me' : ''}">${esc(p.name)}</div>
+        <div class="pod-pts">${p.total} pts</div>
+      </div>
+      <div class="pod-bar"><span class="pod-medal">${medal[r]}</span><span class="pod-pos">${r}º</span></div>
+    </div>`;
+  }).join('');
+  return `<div class="card podium-card"><h3>🏆 Pódio</h3><div class="podium">${cols}</div></div>`;
+}
+
+// "Corrida pelo título": evolução da posição de cada um ao longo das rodadas (SVG).
+function raceChartHtml(rounds, board, meName) {
+  if (!rounds || rounds.length < 2) return '';
+  const N = board.length;
+  // participantes mostrados: top 6 + você (se estiver fora)
+  const shown = board.slice(0, 6).map((b) => b.name);
+  if (meName && !shown.includes(meName) && board.some((b) => b.name === meName)) shown.push(meName);
+
+  const W = 100, H = Math.max(46, Math.min(92, N * 9)); // viewBox; escala uniforme
+  const padL = 3, padR = 3, padT = 6, padB = 6;
+  const R = rounds.length;
+  const xAt = (i) => padL + (W - padL - padR) * (R === 1 ? 0.5 : i / (R - 1));
+  const yAt = (rank) => padT + (H - padT - padB) * ((rank - 1) / Math.max(1, N - 1));
+
+  const rankIn = (round, name) => { const b = round.board.find((x) => x.name === name); return b ? b.rank : N; };
+
+  const lines = shown.map((name) => {
+    const pts = rounds.map((rd, i) => `${xAt(i).toFixed(1)},${yAt(rankIn(rd, name)).toFixed(1)}`);
+    const isMe = name === meName;
+    const col = isMe ? 'var(--gold)' : avColor(name);
+    const dots = rounds.map((rd, i) => `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(rankIn(rd, name)).toFixed(1)}" r="${isMe ? 1.4 : 1}" fill="${col}" />`).join('');
+    return `<g class="race-line ${isMe ? 'me' : ''}">
+      <polyline points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="${isMe ? 1.4 : 0.9}" stroke-linejoin="round" stroke-linecap="round" pathLength="1" />
+      ${dots}
+    </g>`;
+  }).join('');
+
+  const legend = shown.map((name) => `<span class="race-leg"><span class="dot" style="background:${name === meName ? 'var(--gold)' : avColor(name)}"></span>${esc(name)}${name === meName ? ' (você)' : ''}</span>`).join('');
+  const dateLabel = (d) => { try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }); } catch (_) { return d; } };
+
+  return `<div class="card race-card"><h3>🏁 Corrida pelo título</h3>
+    <p class="muted">Posição no ranking a cada dia de jogos (mais alto = melhor).</p>
+    <div class="race-wrap"><svg viewBox="0 0 ${W} ${H}" class="race-svg">${lines}</svg></div>
+    <div class="race-axis muted"><span>${esc(dateLabel(rounds[0].date))}</span><span>${esc(dateLabel(rounds[rounds.length - 1].date))}</span></div>
+    <div class="race-legend">${legend}</div>
+  </div>`;
+}
+
 async function renderRanking() {
   const view = $('#tabview');
   view.innerHTML = `<div class="card center"><p>Carregando ranking…</p></div>`;
@@ -784,17 +925,20 @@ async function renderRanking() {
       ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''} board-row" data-name="${esc(r.name)}">
         <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
         ${hasMoves ? `<td class="num">${moveBadge(deltaByName.get(r.name) ?? 0)}</td>` : ''}
-        <td>${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</td>
+        <td><span class="name-cell">${avatarImg(r.avatar, r.name, 'av sm')}<span class="nm">${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span></td>
         <td class="num">${r.match_pts}</td><td class="num">${r.qual_pts}</td>
         <td class="num">${r.exatos}</td><td class="num"><b>${r.total}</b></td>
       </tr>`).join('')}
       </tbody></table></div></div>`;
 
-    view.innerHTML = table + historyFeedHtml(rounds) + tiebreakHtml();
+    view.innerHTML = podiumHtml(leaderboard, meName) + table + historyFeedHtml(rounds)
+      + raceChartHtml(rounds, leaderboard, meName) + tiebreakHtml();
 
     view.querySelectorAll('.board-row').forEach((tr) => {
       tr.onclick = () => openCompare(tr.dataset.name);
     });
+    // dispara a animação do pódio no próximo frame
+    requestAnimationFrame(() => view.querySelectorAll('.pod-col').forEach((c) => c.classList.add('rise')));
   } catch (e) { view.innerHTML = `<div class="card center">${esc(e.message)}</div>`; }
 }
 
@@ -1161,7 +1305,7 @@ async function togglePartida(card) {
       <div class="ppanel-head"><span>${d.predictions.length}/${d.participants} palpitaram</span>${hasResult ? '<span>pontos</span>' : ''}</div>
       ${d.predictions.map((p, i) => `<div class="prow ${p.name === meName ? 'me' : ''}">
         <span class="prk">${hasResult && i === 0 && p.points > 0 ? '🥇' : (i + 1)}</span>
-        <span class="pnm">${esc(p.name)}${p.name === meName ? ' <span class="muted">(você)</span>' : ''}</span>
+        <span class="pnm">${avatarImg(p.avatar, p.name, 'av xs')}<span>${esc(p.name)}${p.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span>
         <span class="ppick">${p.home_score} x ${p.away_score}</span>
         ${hasResult ? `<span class="pill ${p.points ? 'pts' : ''} ppts">${p.points}</span>` : '<span class="ppts muted">—</span>'}
       </div>`).join('')}
@@ -1201,6 +1345,20 @@ async function renderAdmin() {
       <button class="btn-primary btn-sm" id="copy-share">Copiar</button></div>
       <div class="spacer"></div>
       <p class="muted">Código (slug): <b>${esc(PoolState.slug)}</b></p>
+    </div>
+
+    <div class="card">
+      <h3>📸 Fotos dos participantes</h3>
+      <p class="muted">Coloque uma foto pra cada um (na zoeira ou não 😄). Aparece no ranking, no pódio e nos palpites de cada jogo.</p>
+      ${data.participants.length ? `<div class="ava-list">${data.participants.map((p) => `
+        <div class="ava-item">
+          ${avatarImg(p.avatar, p.name, 'av lg')}
+          <div class="ava-info"><b>${esc(p.name)}</b></div>
+          <div class="ava-actions">
+            <label class="btn-soft btn-sm">📷 ${p.avatar ? 'Trocar' : 'Foto'}<input type="file" accept="image/*" data-ava="${p.id}" hidden /></label>
+            ${p.avatar ? `<button class="btn-link-danger" data-ava-rm="${p.id}">remover</button>` : ''}
+          </div>
+        </div>`).join('')}</div>` : `<p class="muted">Ninguém entrou no bolão ainda.</p>`}
     </div>
 
     <div class="card">
@@ -1286,7 +1444,53 @@ async function renderAdmin() {
     } catch (e) { toast(e.message, true); }
   };
 
+  // fotos dos participantes
+  view.querySelectorAll('[data-ava]').forEach((inp) => {
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0]; if (!f) return;
+      try {
+        const dataUrl = await fileToAvatar(f);
+        await api('PUT', `/api/pools/${PoolState.slug}/participants/${inp.dataset.ava}/avatar`, { avatar: dataUrl }, { 'x-admin-token': adminToken });
+        toast('Foto atualizada 📸');
+        data.participants = (await api('GET', `/api/pools/${PoolState.slug}/admin`, null, { 'x-admin-token': adminToken })).participants;
+        renderAdmin();
+      } catch (e) { toast(e.message || 'Não consegui processar a imagem.', true); }
+    };
+  });
+  view.querySelectorAll('[data-ava-rm]').forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api('PUT', `/api/pools/${PoolState.slug}/participants/${b.dataset.avaRm}/avatar`, { avatar: null }, { 'x-admin-token': adminToken });
+        toast('Foto removida');
+        renderAdmin();
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+
   renderAdminMatches();
+}
+
+// Redimensiona a imagem escolhida para um quadrado pequeno (corta no centro) e
+// devolve um data URL JPEG levinho — guardado direto no banco, sem storage externo.
+function fileToAvatar(file) {
+  return new Promise((resolve, reject) => {
+    if (!/^image\//.test(file.type)) return reject(new Error('Arquivo não é uma imagem.'));
+    const img = new Image();
+    img.onload = () => {
+      const size = 160;
+      const cv = document.createElement('canvas'); cv.width = size; cv.height = size;
+      const ctx = cv.getContext('2d');
+      const min = Math.min(img.width, img.height);
+      const sx = (img.width - min) / 2, sy = (img.height - min) / 2;
+      ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+      resolve(cv.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => reject(new Error('Imagem inválida.'));
+    const fr = new FileReader();
+    fr.onload = () => { img.src = fr.result; };
+    fr.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
+    fr.readAsDataURL(file);
+  });
 }
 
 function renderAdminMatches() {

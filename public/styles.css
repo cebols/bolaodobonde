@@ -407,6 +407,58 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .tb-list li { margin-bottom: 0.25rem; }
 .tb-foot { font-size: 0.82rem; margin: 0.3rem 0 0; }
 
+/* ---------- avatares ---------- */
+.av { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px var(--line); vertical-align: middle; }
+.av.av-ph { color: #fff; font-weight: 800; font-size: 0.7rem; }
+.av.sm { width: 24px; height: 24px; font-size: 0.6rem; }
+.av.xs { width: 20px; height: 20px; font-size: 0.55rem; }
+.av.lg { width: 52px; height: 52px; font-size: 1.1rem; }
+.name-cell { display: inline-flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.name-cell .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .pnm { display: flex; align-items: center; gap: 0.4rem; }
+.prow .pnm > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- lembretes (hero) ---------- */
+.hero-actions { margin-top: 0.7rem; }
+.btn-ghost.active { background: rgba(255,203,5,0.16); border-color: var(--gold); color: var(--gold); }
+
+/* ---------- pódio animado ---------- */
+.podium-card .podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; align-items: end; margin-top: 0.7rem; }
+.pod-col { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+.pod-person { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; text-align: center; opacity: 0; transform: translateY(10px); transition: opacity .4s ease .25s, transform .4s ease .25s; }
+.pod-col.rise .pod-person { opacity: 1; transform: none; }
+.pod-av { width: 46px; height: 46px; }
+.pod-1 .pod-av { width: 58px; height: 58px; box-shadow: 0 0 0 2px var(--gold); }
+.pod-name { font-weight: 700; font-size: 0.8rem; max-width: 6.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pod-name.me { color: var(--gold); }
+.pod-pts { font-size: 0.72rem; color: var(--muted); }
+.pod-bar { width: 100%; border-radius: 8px 8px 0 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.1rem; padding: 0.3rem 0; font-weight: 800; height: 0; --h: 40px; transition: height .55s cubic-bezier(.2,.7,.3,1); overflow: hidden; }
+.pod-col.rise .pod-bar { height: var(--h); }
+.pod-1 .pod-bar { background: linear-gradient(var(--gold), #b8920a); --h: 86px; color: #1a1400; }
+.pod-2 .pod-bar { background: linear-gradient(#cfcfcf, #8d8d8d); --h: 62px; color: #1a1a1a; }
+.pod-3 .pod-bar { background: linear-gradient(#cd853f, #9c5a23); --h: 46px; color: #fff; }
+.pod-col.empty .pod-bar { background: var(--card2); color: var(--muted); }
+.pod-medal { font-size: 1.05rem; }
+.pod-pos { font-size: 0.72rem; }
+
+/* ---------- corrida pelo título (gráfico) ---------- */
+.race-svg { width: 100%; height: auto; max-height: 340px; display: block; overflow: visible; }
+.race-line polyline { stroke-dasharray: 1; stroke-dashoffset: 1; animation: race-draw 1.1s ease forwards; }
+.race-line circle { opacity: 0; animation: race-dot .3s ease forwards 1s; }
+@keyframes race-draw { to { stroke-dashoffset: 0; } }
+@keyframes race-dot { to { opacity: 1; } }
+.race-axis { display: flex; justify-content: space-between; font-size: 0.7rem; margin-top: 0.2rem; }
+.race-legend { display: flex; flex-wrap: wrap; gap: 0.5rem 0.8rem; margin-top: 0.5rem; }
+.race-leg { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; }
+.race-leg .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+
+/* ---------- admin: fotos ---------- */
+.ava-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
+.ava-item { display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem; border: 1px solid var(--line); border-radius: 10px; }
+.ava-item .ava-info { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ava-actions { display: flex; align-items: center; gap: 0.6rem; flex: 0 0 auto; }
+.ava-actions label { cursor: pointer; margin: 0; }
+
 @media (max-width: 560px) {
   .match { grid-template-columns: 1fr auto 1fr; }
   .match .team { font-size: 0.85rem; }

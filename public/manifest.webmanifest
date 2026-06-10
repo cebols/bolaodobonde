@@ -1,0 +1,19 @@
+{
+  "name": "Bolão da Copa 2026",
+  "short_name": "Bolão 2026",
+  "description": "Palpites, ranking ao vivo e quem avança na Copa do Mundo FIFA 2026.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0d1310",
+  "theme_color": "#0c6e38",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

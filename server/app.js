@@ -277,7 +277,7 @@ app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
   const pool = await getPool(req, res); if (!pool) return;
   await maybeSync(pool);
   const rows = await all(`
-    SELECT pa.name,
+    SELECT pa.name, pa.avatar,
       COALESCE((SELECT SUM(points) FROM predictions WHERE participant_id = pa.id), 0) AS match_pts,
       COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id), 0) AS qual_pts,
       (SELECT COUNT(*) FROM predictions pr JOIN matches m ON m.id = pr.match_id
@@ -285,7 +285,7 @@ app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
            AND pr.home_score = m.home_score AND pr.away_score = m.away_score) AS exatos
     FROM participants pa WHERE pa.pool_id = $1`, [pool.id]);
   const board = rows.map((r) => ({
-    name: r.name,
+    name: r.name, avatar: r.avatar || null,
     total: Number(r.match_pts) + Number(r.qual_pts),
     match_pts: Number(r.match_pts), qual_pts: Number(r.qual_pts), exatos: Number(r.exatos),
   })).sort((a, b) => b.total - a.total || b.exatos - a.exatos || a.name.localeCompare(b.name));
@@ -375,12 +375,12 @@ app.get('/api/pools/:slug/matches/:id/predictions', wrap(async (req, res) => {
   const started = !!m.finished || new Date(m.kickoff).getTime() <= Date.now();
   if (!started) return res.json({ match: matchPublic(m), revealed: false, predictions: [] });
   const rows = await all(
-    `SELECT pa.name, pr.home_score, pr.away_score, pr.points
+    `SELECT pa.name, pa.avatar, pr.home_score, pr.away_score, pr.points
        FROM predictions pr JOIN participants pa ON pa.id = pr.participant_id
       WHERE pr.match_id = $1 AND pa.pool_id = $2`, [m.id, pool.id]);
   const total = await get('SELECT COUNT(*) AS c FROM participants WHERE pool_id = $1', [pool.id]);
   const predictions = rows
-    .map((r) => ({ name: r.name, home_score: r.home_score, away_score: r.away_score, points: r.points }))
+    .map((r) => ({ name: r.name, avatar: r.avatar || null, home_score: r.home_score, away_score: r.away_score, points: r.points }))
     .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
   res.json({ match: matchPublic(m), revealed: true, predictions, participants: Number(total.c) });
 }));
@@ -395,8 +395,27 @@ async function requireAdmin(req, res) {
 app.get('/api/pools/:slug/admin', wrap(async (req, res) => {
   const pool = await requireAdmin(req, res); if (!pool) return;
   const matches = await all('SELECT * FROM matches WHERE pool_id = $1 ORDER BY ord', [pool.id]);
-  const participants = await all('SELECT id, name FROM participants WHERE pool_id = $1 ORDER BY name', [pool.id]);
+  const participants = await all('SELECT id, name, avatar FROM participants WHERE pool_id = $1 ORDER BY name', [pool.id]);
   res.json({ pool: publicPool(pool), matches: matches.map(matchPublic), participants, lock: lockInfo(pool, matches) });
+}));
+
+// Admin define/remove a foto de um participante (data URL pequeno, redimensionado no cliente).
+app.put('/api/pools/:slug/participants/:id/avatar', wrap(async (req, res) => {
+  const pool = await requireAdmin(req, res); if (!pool) return;
+  const p = await get('SELECT id FROM participants WHERE id = $1 AND pool_id = $2', [req.params.id, pool.id]);
+  if (!p) return res.status(404).json({ error: 'Participante não encontrado.' });
+  let avatar = req.body?.avatar;
+  if (avatar === null || avatar === '' || avatar === undefined) {
+    await run('UPDATE participants SET avatar = NULL WHERE id = $1', [p.id]);
+    return res.json({ ok: true, avatar: null });
+  }
+  avatar = String(avatar);
+  if (!/^data:image\/(png|jpeg|jpg|webp);base64,/.test(avatar)) {
+    return res.status(400).json({ error: 'Imagem inválida.' });
+  }
+  if (avatar.length > 200000) return res.status(413).json({ error: 'Imagem muito grande (reduza a foto).' });
+  await run('UPDATE participants SET avatar = $1 WHERE id = $2', [avatar, p.id]);
+  res.json({ ok: true, avatar });
 }));
 
 // Admin define o modo de trava global: 'auto' (5 min antes do 1º jogo), 'open' ou 'locked'.
