@@ -745,7 +745,7 @@ async function renderRanking() {
       view.innerHTML = `<div class="card center"><h3>Ainda não há participantes 🙃</h3><p class="muted">Compartilhe o link do bolão!</p></div>`;
     } else {
       view.innerHTML = `<div class="card"><h3>📊 Classificação</h3>
-        <table class="board"><thead><tr>
+        <div class="board-wrap"><table class="board"><thead><tr>
           <th class="num">#</th><th>Participante</th>
           <th class="num">Jogos</th><th class="num">Avanço</th><th class="num">Exatos</th><th class="num">Total</th>
         </tr></thead><tbody>
@@ -755,7 +755,7 @@ async function renderRanking() {
           <td class="num">${r.match_pts}</td><td class="num">${r.qual_pts}</td>
           <td class="num">${r.exatos}</td><td class="num"><b>${r.total}</b></td>
         </tr>`).join('')}
-        </tbody></table></div>`;
+        </tbody></table></div></div>`;
     }
   } catch (e) { view.innerHTML = `<div class="card center">${esc(e.message)}</div>`; }
 }

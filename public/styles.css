@@ -162,13 +162,13 @@ button:disabled { opacity: 0.6; cursor: default; }
 .group-card .match .team { font-size: 0.85rem; }
 
 .stand-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table.stand { width: 100%; border-collapse: collapse; font-size: 0.78rem; min-width: 360px; }
-table.stand td { padding: 0.26rem 0.3rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
-table.stand td.pos { width: 1.2rem; text-align: center; color: var(--muted); font-weight: 700; }
-table.stand td.tm { font-weight: 600; position: sticky; left: 0; background: var(--card); }
-table.stand td.tm .flag { margin-right: 0.35rem; }
+table.stand { width: 100%; border-collapse: collapse; font-size: 0.72rem; table-layout: fixed; }
+table.stand td { padding: 0.22rem 0.15rem; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
+table.stand td.pos { width: 1.4rem; text-align: center; color: var(--muted); font-weight: 700; }
+table.stand td.tm { font-weight: 600; position: sticky; left: 0; background: var(--card); text-overflow: ellipsis; }
+table.stand td.tm .flag { margin-right: 0.3rem; }
 table.stand td.tm span { vertical-align: middle; }
-table.stand td.n { text-align: center; width: 1.7rem; color: var(--ink); }
+table.stand td.n { text-align: center; width: 1.55rem; color: var(--ink); }
 table.stand tr.stand-head td { color: var(--muted); font-weight: 700; font-size: 0.7rem; border-bottom: 2px solid var(--line); background: var(--card2); }
 table.stand tr.stand-head td.tm { background: var(--card2); }
 table.stand tr.q1 td { background: var(--q1bg); }
@@ -268,8 +268,9 @@ table.stand tr.q3 td.pos { color: var(--gold); }
 .bkt-label { text-align: center; font-size: 0.62rem; color: var(--muted); padding: 0.2rem; }
 
 /* ---------- leaderboard ---------- */
-table.board { width: 100%; border-collapse: collapse; }
-table.board th, table.board td { padding: 0.55rem 0.6rem; text-align: left; border-bottom: 1px solid var(--line); }
+.board-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.board { width: 100%; border-collapse: collapse; min-width: 380px; }
+table.board th, table.board td { padding: 0.45rem 0.5rem; text-align: left; border-bottom: 1px solid var(--line); }
 table.board th { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
 table.board td.num, table.board th.num { text-align: center; }
 table.board tr.me { background: var(--goldbg); }
