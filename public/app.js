@@ -482,23 +482,32 @@ function liveBannerHtml() {
   if (!live.length) return '';
   return `<div class="card live-now-card">
     <h3><span class="live-dot"></span>Ao vivo agora</h3>
-    ${live.map((m) => {
-      const d = PoolState.draft[m.id] || {};
-      const has = d.home != null && d.home !== '' && d.away != null && d.away !== '';
-      const myPick = has ? `${d.home} x ${d.away}` : null;
-      const score = m.home_score != null ? `${m.home_score} x ${m.away_score}` : '—';
-      return `<div class="live-now-row">
-        <div class="ln-teams">${flag(m.home_team)} <span>${esc(m.home_team)}</span> <span class="cmp-x">×</span> <span>${esc(m.away_team)}</span> ${flag(m.away_team)}</div>
-        <div class="ln-score"><span class="pill live">${score}</span></div>
-        <div class="ln-pick">${myPick ? `seu palpite: <b>${esc(myPick)}</b>` : '<span class="muted">você não palpitou</span>'}</div>
-      </div>`;
-    }).join('')}
+    <p class="muted" style="margin:-.2rem 0 .6rem">Toque num jogo pra ver a pontuação parcial da galera.</p>
+    ${live.map(partidaCard).join('')}
   </div>`;
 }
-// Atualiza só o bloco "ao vivo" (sem re-renderizar a aba e apagar o que se digita).
+function wireLiveCards(container) {
+  container.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
+}
+// Atualiza o bloco "ao vivo" sem re-renderizar a aba inteira. Se o conjunto de
+// jogos ao vivo mudou, re-renderiza; senão, só atualiza placar e recarrega os
+// painéis abertos (pra pontuação parcial acompanhar o placar).
 function refreshLiveBanner() {
   const el = $('#live-banner');
-  if (el) el.innerHTML = liveBannerHtml();
+  if (!el) return;
+  const live = liveMatchesNow();
+  const liveIds = live.map((m) => String(m.id));
+  const existing = [...el.querySelectorAll('.pcard')].map((c) => c.dataset.matchId);
+  const sameSet = liveIds.length === existing.length && liveIds.every((id) => existing.includes(id));
+  if (!sameSet) { el.innerHTML = liveBannerHtml(); wireLiveCards(el); return; }
+  for (const m of live) {
+    const card = el.querySelector(`.pcard[data-match-id="${m.id}"]`);
+    if (!card) continue;
+    const info = card.querySelector('.pc-info');
+    if (info) { info.className = `pc-info ${matchStatus(m).cls}`; info.innerHTML = matchInfoLine(m); }
+    const panel = card.querySelector('.pcard-panel');
+    if (panel && !panel.hidden) loadMatchPanel(card); // recarrega pontos parciais
+  }
 }
 
 async function renderPalpites() {
@@ -618,6 +627,7 @@ async function renderPalpites() {
   }
 
   view.innerHTML = html;
+  wireLiveCards($('#live-banner'));
 
   $('#btn-logout').onclick = () => {
     store.clearPart(PoolState.slug);
@@ -1476,12 +1486,18 @@ function renderCalendar(matches, content) {
   content.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
 }
 
-async function togglePartida(card) {
+function togglePartida(card) {
   const panel = card.querySelector('.pcard-panel');
   if (!panel.hidden) { panel.hidden = true; card.classList.remove('open'); return; }
   card.classList.add('open'); panel.hidden = false;
-  if (panel.dataset.loaded) return;
-  panel.innerHTML = `<p class="muted center" style="padding:.5rem 0">Carregando palpites…</p>`;
+  if (!panel.dataset.loaded) loadMatchPanel(card);
+}
+
+// Carrega (ou recarrega) o painel de palpites de um card de jogo. Usado pelo
+// toggle e pela atualização ao vivo (recarrega o painel aberto p/ pontos atualizados).
+async function loadMatchPanel(card) {
+  const panel = card.querySelector('.pcard-panel');
+  if (!panel.dataset.loaded) panel.innerHTML = `<p class="muted center" style="padding:.5rem 0">Carregando palpites…</p>`;
   try {
     const d = await api('GET', `/api/pools/${PoolState.slug}/matches/${card.dataset.matchId}/predictions`);
     panel.dataset.loaded = '1';
@@ -1496,7 +1512,7 @@ async function togglePartida(card) {
     const meName = PoolState.me?.name;
     const hasResult = d.match.home_score != null;
     panel.innerHTML = `<div class="ppanel">
-      <div class="ppanel-head"><span>${d.predictions.length}/${d.participants} palpitaram</span>${hasResult ? '<span>pontos</span>' : ''}</div>
+      <div class="ppanel-head"><span>${d.predictions.length}/${d.participants} palpitaram</span>${hasResult ? `<span>pontos${d.match.finished ? '' : ' (parcial)'}</span>` : ''}</div>
       ${d.predictions.map((p, i) => `<div class="prow ${p.name === meName ? 'me' : ''}">
         <span class="prk">${hasResult && i === 0 && p.points > 0 ? '🥇' : (i + 1)}</span>
         <span class="pnm">${avatarImg(p.avatar, p.name, 'av xs')}<span>${esc(p.name)}${p.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span>
