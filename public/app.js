@@ -276,7 +276,7 @@ function startPolling() {
       else if (PoolState.tab === 'desempenho') renderDesempenho();
       // aba "palpites" não é re-renderizada para não apagar o que está sendo digitado.
     } catch (_) { /* silencioso */ }
-  }, 60000);
+  }, 30000);
 }
 
 // ---------- lembretes de jogos (notificação local, ~10 min antes) ----------

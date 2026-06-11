@@ -7,8 +7,9 @@ import { EN_TO_PT, STAGE_NAMES } from '../data/wc2026.js';
 
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN || '';
 const COMP = process.env.FOOTBALL_DATA_COMP || 'WC'; // código da competição (Copa)
-const UPSTREAM_TTL = 60 * 1000;  // 1 req/min no máx. (respeita o free tier)
-const POOL_TTL = 45 * 1000;      // reaplica num bolão no máx. a cada 45s
+const UPSTREAM_TTL = 20 * 1000;  // cache do upstream (<=3 req/min, dentro do free tier)
+const POOL_TTL = 20 * 1000;      // reaplica num bolão no máx. a cada 20s
+const FETCH_TIMEOUT = 7000;      // teto pra chamada ao football-data (não pendura a request)
 
 export const SYNC_ENABLED = !!TOKEN;
 
@@ -32,11 +33,17 @@ function toPt(name) {
 
 // ---- cache da resposta do upstream (compartilhado entre todos os bolões) ----
 let upstreamCache = { at: 0, data: null };
-async function fetchUpstream() {
-  if (Date.now() - upstreamCache.at < UPSTREAM_TTL && upstreamCache.data) return upstreamCache.data;
-  const res = await fetch(`https://api.football-data.org/v4/competitions/${COMP}/matches`, {
-    headers: { 'X-Auth-Token': TOKEN },
-  });
+async function fetchUpstream({ force = false } = {}) {
+  if (!force && Date.now() - upstreamCache.at < UPSTREAM_TTL && upstreamCache.data) return upstreamCache.data;
+  // Timeout pra não pendurar a request se o football-data demorar.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+  let res;
+  try {
+    res = await fetch(`https://api.football-data.org/v4/competitions/${COMP}/matches`, {
+      headers: { 'X-Auth-Token': TOKEN }, signal: ctrl.signal,
+    });
+  } finally { clearTimeout(timer); }
   if (!res.ok) throw new Error(`football-data ${res.status}`);
   const json = await res.json();
   const list = Array.isArray(json.matches) ? json.matches : [];
@@ -108,28 +115,28 @@ export async function syncPool(pool, { force = false } = {}) {
   return { updated, redated };
 }
 
-// Atalho usado nos GETs: tenta sincronizar sem travar a resposta por muito tempo.
+// Atalho usado nos GETs. AGUARDA o sync terminar — no serverless (Vercel) a função
+// congela após enviar a resposta, então abandonar o sync em background fazia o
+// placar não atualizar. O POOL_TTL garante que isso só roda esporadicamente (a
+// maioria dos GETs nem chega a buscar o upstream) e o fetch tem timeout próprio.
 export async function maybeSync(pool) {
   if (!SYNC_ENABLED) return;
-  try {
-    await Promise.race([
-      syncPool(pool),
-      new Promise((resolve) => setTimeout(resolve, 4000)), // teto de 4s
-    ]);
-  } catch (_) { /* best-effort */ }
+  try { await syncPool(pool); } catch (_) { /* best-effort */ }
 }
 
 // Diagnóstico (não vaza o token): testa a conexão e mostra quantos jogos vieram e
 // quantas seleções casaram com os nomes do bolão. Útil para validar antes dos jogos.
 export async function diagnose() {
-  const out = { enabled: SYNC_ENABLED, comp: COMP, tokenLen: TOKEN.length };
+  const out = { enabled: SYNC_ENABLED, comp: COMP, tokenLen: TOKEN.length, serverTime: new Date().toISOString() };
   if (!SYNC_ENABLED) { out.error = 'FOOTBALL_DATA_TOKEN não definido na Vercel.'; return out; }
   let list;
-  try { list = await fetchUpstream(); }
+  // Força busca fresca (sem cache) pra refletir o estado REAL da API agora.
+  try { list = await fetchUpstream({ force: true }); }
   catch (e) { out.ok = false; out.error = String(e.message || e); return out; }
 
   out.ok = true;
   out.totalMatches = list.length;
+  out.upstreamAgeSec = Math.round((Date.now() - upstreamCache.at) / 1000);
   out.byStatus = {};
   out.byStage = {};
   const matched = new Set();
@@ -145,6 +152,17 @@ export async function diagnose() {
   }
   out.teamsMatched = matched.size;
   out.teamsUnmatched = [...unmatched].sort();
+
+  // Jogos ao vivo/em andamento segundo a API — mostra placar, status e quando a
+  // API atualizou (lastUpdated). Se o gol não aparecer aqui, o atraso é do plano free.
+  const LIVE = ['IN_PLAY', 'PAUSED', 'SUSPENDED', 'LIVE'];
+  out.live = list.filter((m) => LIVE.includes(m.status)).map((m) => ({
+    status: m.status,
+    home: m.homeTeam?.name, away: m.awayTeam?.name,
+    score: `${m.score?.fullTime?.home ?? '-'}x${m.score?.fullTime?.away ?? '-'}`,
+    lastUpdated: m.lastUpdated,
+    matched: !!(toPt(m.homeTeam?.name) && toPt(m.awayTeam?.name)),
+  }));
   out.sample = list.slice(0, 5).map((m) => ({
     stage: m.stage, group: m.group, status: m.status,
     home: m.homeTeam?.name, away: m.awayTeam?.name,
