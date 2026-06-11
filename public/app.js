@@ -274,7 +274,9 @@ function startPolling() {
       if (PoolState.tab === 'chave') renderBracket();
       else if (PoolState.tab === 'ranking') renderRanking();
       else if (PoolState.tab === 'desempenho') renderDesempenho();
-      // aba "palpites" não é re-renderizada para não apagar o que está sendo digitado.
+      else if (PoolState.tab === 'palpites') refreshLiveBanner();
+      // a aba "palpites" não é re-renderizada inteira (só o bloco "ao vivo") para
+      // não apagar o que está sendo digitado.
     } catch (_) { /* silencioso */ }
   }, 30000);
 }
@@ -470,6 +472,35 @@ function refreshAll() {
   for (const [sel, fn] of Object.entries(ids)) { const el = $(sel); if (el) el.innerHTML = fn(); }
 }
 
+// Jogos rolando agora (já começaram e não terminaram) com placar e seu palpite.
+function liveMatchesNow() {
+  const now = Date.now();
+  return (PoolState.data.matches || []).filter((m) => m.home_team && m.away_team && !m.finished && new Date(m.kickoff).getTime() <= now);
+}
+function liveBannerHtml() {
+  const live = liveMatchesNow();
+  if (!live.length) return '';
+  return `<div class="card live-now-card">
+    <h3><span class="live-dot"></span>Ao vivo agora</h3>
+    ${live.map((m) => {
+      const d = PoolState.draft[m.id] || {};
+      const has = d.home != null && d.home !== '' && d.away != null && d.away !== '';
+      const myPick = has ? `${d.home} x ${d.away}` : null;
+      const score = m.home_score != null ? `${m.home_score} x ${m.away_score}` : '—';
+      return `<div class="live-now-row">
+        <div class="ln-teams">${flag(m.home_team)} <span>${esc(m.home_team)}</span> <span class="cmp-x">×</span> <span>${esc(m.away_team)}</span> ${flag(m.away_team)}</div>
+        <div class="ln-score"><span class="pill live">${score}</span></div>
+        <div class="ln-pick">${myPick ? `seu palpite: <b>${esc(myPick)}</b>` : '<span class="muted">você não palpitou</span>'}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+// Atualiza só o bloco "ao vivo" (sem re-renderizar a aba e apagar o que se digita).
+function refreshLiveBanner() {
+  const el = $('#live-banner');
+  if (el) el.innerHTML = liveBannerHtml();
+}
+
 async function renderPalpites() {
   const view = $('#tabview');
   if (!PoolState.me) return renderAuth(view);
@@ -511,7 +542,8 @@ async function renderPalpites() {
       </div>
       ${mine.lastSaved ? `<p class="muted save-stamp">💾 Último salvamento: ${esc(fmtDate(new Date(mine.lastSaved).toISOString()))}</p>` : ''}
       ${missing > 0 && !lock.locked ? `<p class="missing-hint">⚠️ Você tem <b>${missing}</b> jogo(s) abertos ainda sem palpite.</p>` : ''}
-    </div>`;
+    </div>
+    <div id="live-banner">${liveBannerHtml()}</div>`;
 
   if (lock.locked) {
     html += `<div class="lock-banner">🔒 <b>Palpites travados.</b> O organizador fechou as apostas — não dá mais para editar os placares.</div>`;

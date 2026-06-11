@@ -312,6 +312,16 @@ table.board tr.me { background: var(--goldbg); }
 .spacer { height: 0.5rem; }
 .divider { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 0.8rem 0; }
 
+/* ---------- bloco "ao vivo agora" (aba palpites) ---------- */
+.live-now-card { border-color: var(--danger); }
+.live-now-card h3 { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.5rem; }
+.live-now-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.3rem 0.6rem; padding: 0.5rem 0; border-top: 1px solid var(--line); }
+.live-now-row:first-of-type { border-top: none; }
+.ln-teams { font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+.ln-score { text-align: right; font-variant-numeric: tabular-nums; }
+.ln-pick { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); }
+.ln-pick b { color: var(--ink); }
+
 /* ---------- save stamp / palpites faltando ---------- */
 .save-stamp { margin: 0.4rem 0 0; font-size: 0.78rem; }
 .missing-hint { margin: 0.3rem 0 0; font-size: 0.82rem; color: var(--gold); }
