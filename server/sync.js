@@ -7,11 +7,30 @@ import { EN_TO_PT, STAGE_NAMES } from '../data/wc2026.js';
 
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN || '';
 const COMP = process.env.FOOTBALL_DATA_COMP || 'WC'; // código da competição (Copa)
-const UPSTREAM_TTL = 20 * 1000;  // cache do upstream (<=3 req/min, dentro do free tier)
-const POOL_TTL = 20 * 1000;      // reaplica num bolão no máx. a cada 20s
-const FETCH_TIMEOUT = 7000;      // teto pra chamada ao football-data (não pendura a request)
+const UPSTREAM_TTL = 20 * 1000;  // cache do football-data (fixtures/datas; <=3 req/min)
+const POOL_TTL = 12 * 1000;      // reaplica num bolão no máx. a cada 12s (ao vivo via ESPN)
+const FETCH_TIMEOUT = 7000;      // teto pra chamadas externas (não pendura a request)
+
+// Placar ao vivo via API pública da ESPN (grátis, sem chave, mais rápida que o free
+// tier do football-data). Usada como fonte primária de placar; football-data segue
+// como base de fixtures/datas e fallback de placar.
+const ESPN_LEAGUE = process.env.ESPN_LEAGUE || 'fifa.world';
+const ESPN_TTL = 12 * 1000;
 
 export const SYNC_ENABLED = !!TOKEN;
+
+// Variantes de nomes da ESPN que diferem do football-data → nome PT do bolão.
+const ESPN_ALIAS = {
+  'south korea': 'Coreia do Sul', 'korea republic': 'Coreia do Sul',
+  'ivory coast': 'Costa do Marfim',
+  'usa': 'Estados Unidos', 'united states': 'Estados Unidos',
+  'czechia': 'Tchéquia', 'czech republic': 'Tchéquia',
+  'cape verde': 'Cabo Verde', 'cape verde islands': 'Cabo Verde',
+  'bosnia and herzegovina': 'Bósnia e Herzegovina', 'bosnia herzegovina': 'Bósnia e Herzegovina',
+  'iran': 'Irã', 'ir iran': 'Irã',
+  'turkiye': 'Turquia', 'turkey': 'Turquia',
+  'curacao': 'Curaçao',
+};
 
 const FD_STAGE = {
   GROUP_STAGE: 'group', LAST_32: 'r32', ROUND_OF_32: 'r32',
@@ -51,6 +70,55 @@ async function fetchUpstream({ force = false } = {}) {
   return list;
 }
 
+function espnToPt(name) {
+  if (!name) return null;
+  return ESPN_ALIAS[norm(name)] || toPt(name);
+}
+
+// ---- cache do placar ao vivo da ESPN ----
+let espnCache = { at: 0, data: null };
+async function fetchEspn({ force = false } = {}) {
+  if (!force && Date.now() - espnCache.at < ESPN_TTL && espnCache.data) return espnCache.data;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+  let res;
+  try {
+    res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/scoreboard`, { signal: ctrl.signal });
+  } finally { clearTimeout(timer); }
+  if (!res.ok) throw new Error(`espn ${res.status}`);
+  const json = await res.json();
+  const events = Array.isArray(json.events) ? json.events : [];
+  const out = [];
+  for (const ev of events) {
+    const comp = ev.competitions && ev.competitions[0];
+    if (!comp) continue;
+    const cs = comp.competitors || [];
+    const home = cs.find((c) => c.homeAway === 'home');
+    const away = cs.find((c) => c.homeAway === 'away');
+    if (!home || !away) continue;
+    const hp = espnToPt(home.team?.displayName || home.team?.name || home.team?.shortDisplayName);
+    const ap = espnToPt(away.team?.displayName || away.team?.name || away.team?.shortDisplayName);
+    if (!hp || !ap) continue;
+    const state = ev.status?.type?.state || comp.status?.type?.state || 'pre'; // pre | in | post
+    const hs = home.score != null && home.score !== '' ? parseInt(home.score, 10) : null;
+    const as = away.score != null && away.score !== '' ? parseInt(away.score, 10) : null;
+    out.push({ home: hp, away: ap, hs, as, state, completed: !!(ev.status?.type?.completed) });
+  }
+  espnCache = { at: Date.now(), data: out };
+  return out;
+}
+
+// Placar de um jogo do bolão a partir da ESPN (orienta home/away pelos times do jogo).
+function scoreFromEspn(m, list) {
+  if (!m.home_team || !m.away_team) return null;
+  for (const e of list) {
+    if (e.state === 'pre' || e.hs == null || e.as == null) continue; // ainda não começou
+    if (e.home === m.home_team && e.away === m.away_team) return { h: e.hs, a: e.as, finished: e.completed };
+    if (e.home === m.away_team && e.away === m.home_team) return { h: e.as, a: e.hs, finished: e.completed };
+  }
+  return null;
+}
+
 // Casa um jogo do upstream com um jogo do bolão (por grupo+par de times, ou par de times no mata-mata).
 function findMatch(rows, fd) {
   const stage = FD_STAGE[fd.stage] || null;
@@ -83,6 +151,10 @@ export async function syncPool(pool, { force = false } = {}) {
   try { list = await fetchUpstream(); }
   catch (e) { return { updated: 0, error: String(e.message || e) }; }
 
+  // Placar ao vivo da ESPN (best-effort: se cair, segue só com o football-data).
+  let espn = [];
+  try { espn = await fetchEspn(); } catch (_) { espn = []; }
+
   const rows = await all('SELECT * FROM matches WHERE pool_id = $1', [pool.id]);
   const touchedGroups = new Set();
   let updated = 0, redated = 0;
@@ -98,7 +170,8 @@ export async function syncPool(pool, { force = false } = {}) {
         m.kickoff = iso; redated++;
       }
     }
-    const sc = scoreOf(fd);
+    // Placar: ESPN primeiro (mais rápido), football-data como fallback.
+    const sc = scoreFromEspn(m, espn) || scoreOf(fd);
     if (!sc) continue;
     const fin = sc.finished ? 1 : 0;
     if (m.home_score === sc.h && m.away_score === sc.a && (m.finished ? 1 : 0) === fin) continue;
@@ -169,6 +242,16 @@ export async function diagnose() {
     score: `${m.score?.fullTime?.home ?? '-'}x${m.score?.fullTime?.away ?? '-'}`,
     pt: `${toPt(m.homeTeam?.name) || '?'} x ${toPt(m.awayTeam?.name) || '?'}`,
   }));
+
+  // Fonte primária de placar ao vivo: ESPN.
+  out.espn = { league: ESPN_LEAGUE };
+  try {
+    const ev = await fetchEspn({ force: true });
+    out.espn.ok = true;
+    out.espn.events = ev.length;
+    out.espn.live = ev.filter((e) => e.state === 'in').map((e) => ({ home: e.home, away: e.away, score: `${e.hs ?? '-'}x${e.as ?? '-'}` }));
+    out.espn.sample = ev.slice(0, 6).map((e) => ({ home: e.home, away: e.away, score: `${e.hs ?? '-'}x${e.as ?? '-'}`, state: e.state }));
+  } catch (e) { out.espn.ok = false; out.espn.error = String(e.message || e); }
   return out;
 }
 
