@@ -1511,12 +1511,13 @@ async function renderAdmin() {
 
     <div class="card">
       <h3>📸 Fotos dos participantes</h3>
-      <p class="muted">Coloque uma foto pra cada um (na zoeira ou não 😄). Aparece no ranking, no pódio e nos palpites de cada jogo.</p>
+      <p class="muted">Coloque uma foto pra cada um (na zoeira ou não 😄). Aparece no ranking, no pódio e nos palpites de cada jogo. <b>Dica:</b> copie uma imagem (botão direito → copiar imagem), clique em <b>📋 Colar</b> e pronto — ou aperte Ctrl+V.</p>
       ${data.participants.length ? `<div class="ava-list">${data.participants.map((p) => `
         <div class="ava-item">
           ${avatarImg(p.avatar, p.name, 'av lg')}
           <div class="ava-info"><b>${esc(p.name)}</b></div>
           <div class="ava-actions">
+            <button class="btn-soft btn-sm" data-ava-paste="${p.id}">📋 Colar</button>
             <label class="btn-soft btn-sm">📷 ${p.avatar ? 'Trocar' : 'Foto'}<input type="file" accept="image/*" data-ava="${p.id}" hidden /></label>
             ${p.avatar ? `<button class="btn-link-danger" data-ava-rm="${p.id}">remover</button>` : ''}
           </div>
@@ -1609,16 +1610,10 @@ async function renderAdmin() {
 
   // fotos dos participantes
   view.querySelectorAll('[data-ava]').forEach((inp) => {
-    inp.onchange = async () => {
-      const f = inp.files && inp.files[0]; if (!f) return;
-      try {
-        const dataUrl = await fileToAvatar(f);
-        await api('PUT', `/api/pools/${PoolState.slug}/participants/${inp.dataset.ava}/avatar`, { avatar: dataUrl }, { 'x-admin-token': adminToken });
-        toast('Foto atualizada 📸');
-        data.participants = (await api('GET', `/api/pools/${PoolState.slug}/admin`, null, { 'x-admin-token': adminToken })).participants;
-        renderAdmin();
-      } catch (e) { toast(e.message || 'Não consegui processar a imagem.', true); }
-    };
+    inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) uploadAvatar(inp.dataset.ava, f); };
+  });
+  view.querySelectorAll('[data-ava-paste]').forEach((b) => {
+    b.onclick = () => armAvatarPaste(b.dataset.avaPaste, b);
   });
   view.querySelectorAll('[data-ava-rm]').forEach((b) => {
     b.onclick = async () => {
@@ -1632,6 +1627,52 @@ async function renderAdmin() {
 
   renderAdminMatches();
 }
+
+// Sobe a foto (arquivo OU blob colado) de um participante: redimensiona e salva.
+async function uploadAvatar(pid, blob) {
+  const adminToken = store.getAdmin(PoolState.slug);
+  if (!adminToken) return toast('Você precisa ser admin.', true);
+  try {
+    const dataUrl = await fileToAvatar(blob);
+    await api('PUT', `/api/pools/${PoolState.slug}/participants/${pid}/avatar`, { avatar: dataUrl }, { 'x-admin-token': adminToken });
+    toast('Foto atualizada 📸');
+    if (PoolState.tab === 'admin') renderAdmin();
+  } catch (e) { toast(e.message || 'Não consegui processar a imagem.', true); }
+}
+
+// "Colar": tenta ler a imagem direto da área de transferência (1 clique). Se o
+// navegador não deixar, arma o modo Ctrl+V (o listener global cuida do paste).
+let armedAvatarPid = null;
+async function armAvatarPaste(pid, btn) {
+  if (navigator.clipboard && navigator.clipboard.read) {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const type = it.types.find((t) => t.startsWith('image/'));
+        if (type) { const blob = await it.getType(type); await uploadAvatar(pid, blob); return; }
+      }
+    } catch (_) { /* sem permissão/sem suporte → cai no Ctrl+V */ }
+  }
+  armedAvatarPid = pid;
+  document.querySelectorAll('.ava-item.armed').forEach((el) => el.classList.remove('armed'));
+  const item = btn.closest('.ava-item'); if (item) item.classList.add('armed');
+  toast('Agora aperte Ctrl+V para colar a foto 📋');
+}
+
+// Listener global de colar: usa o participante "armado" pelo botão Colar.
+document.addEventListener('paste', (e) => {
+  if (!armedAvatarPid) return;
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      const blob = it.getAsFile();
+      const pid = armedAvatarPid; armedAvatarPid = null;
+      if (blob) { e.preventDefault(); uploadAvatar(pid, blob); }
+      return;
+    }
+  }
+  toast('Não achei imagem copiada. Copie uma imagem e tente de novo.', true);
+});
 
 // Redimensiona a imagem escolhida para um quadrado pequeno (corta no centro) e
 // devolve um data URL JPEG levinho — guardado direto no banco, sem storage externo.

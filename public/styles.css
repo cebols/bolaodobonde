@@ -492,7 +492,9 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 
 /* ---------- admin: fotos ---------- */
 .ava-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
-.ava-item { display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem; border: 1px solid var(--line); border-radius: 10px; }
+.ava-item { display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem; border: 1px solid var(--line); border-radius: 10px; transition: border-color .15s, box-shadow .15s; }
+.ava-item.armed { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+.ava-actions { flex-wrap: wrap; justify-content: flex-end; }
 .ava-item .ava-info { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ava-actions { display: flex; align-items: center; gap: 0.6rem; flex: 0 0 auto; }
 .ava-actions label { cursor: pointer; margin: 0; }
