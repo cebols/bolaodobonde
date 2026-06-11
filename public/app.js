@@ -1038,11 +1038,11 @@ async function openCompare(name) {
         <h3 style="margin:0">⚔️ Comparação</h3>
         <button class="btn-soft btn-sm" data-close>Fechar</button>
       </div>
-      ${mine ? `<p class="cmp-tally">Nos jogos já iniciados: <b>${meName}</b> ${myPts} × ${theirPts} <b>${esc(name)}</b> ${myPts > theirPts ? '🟢' : myPts < theirPts ? '🔴' : '🤝'}</p>` : `<p class="muted">Entre no bolão para comparar com seus palpites.</p>`}
+      ${mine ? `<p class="cmp-tally">Nos jogos já liberados: <b>${meName}</b> ${myPts} × ${theirPts} <b>${esc(name)}</b> ${myPts > theirPts ? '🟢' : myPts < theirPts ? '🔴' : '🤝'}</p>` : `<p class="muted">Entre no bolão para comparar com seus palpites.</p>`}
       ${rows.length ? `<div class="board-wrap"><table class="board cmp-table"><thead><tr>
         <th>Jogo / resultado</th>${mine ? `<th class="num">${esc(meName)}</th>` : ''}<th class="num">${esc(name)}</th>
       </tr></thead><tbody>${body}</tbody></table></div>`
-        : `<p class="muted">Ainda não há jogos iniciados para comparar.</p>`}`;
+        : `<p class="muted">Ainda não há jogos liberados para comparar (liberam 2h antes do início).</p>`}`;
     ov.querySelector('[data-close]').onclick = () => ov.remove();
   } catch (e) {
     ov.querySelector('.cmp-modal').innerHTML = `<p class="center">${esc(e.message)}</p>
@@ -1313,7 +1313,7 @@ function renderPartidas() {
     .sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
 
   let html = `<div class="card"><h3>📅 Todas as partidas</h3>
-    <p class="muted">Toque num jogo para ver os palpites da galera (revelados quando o jogo começa). Veja em lista ou no calendário.</p></div>`;
+    <p class="muted">Toque num jogo para ver os palpites da galera (revelados a partir de 2h antes do jogo). Veja em lista ou no calendário.</p></div>`;
 
   html += `<div class="partidas-bar ${cal ? 'cal-mode' : ''}">
     <div class="pview-toggle">
@@ -1454,7 +1454,7 @@ async function togglePartida(card) {
     const d = await api('GET', `/api/pools/${PoolState.slug}/matches/${card.dataset.matchId}/predictions`);
     panel.dataset.loaded = '1';
     if (!d.revealed) {
-      panel.innerHTML = `<div class="ppanel-lock">🔒 Os palpites deste jogo serão revelados quando ele começar.</div>`;
+      panel.innerHTML = `<div class="ppanel-lock">🔒 Os palpites deste jogo são revelados a partir de 2h antes do início.</div>`;
       return;
     }
     if (!d.predictions.length) {

@@ -98,6 +98,9 @@ function publicPool(pool) {
 // Trava GLOBAL dos palpites: por padrão ('auto') trava 5 min antes do 1º jogo do bolão.
 // O admin pode forçar 'open' (sempre liberado) ou 'locked' (sempre travado).
 const LOCK_LEAD_MS = 5 * 60 * 1000;
+// Janela de revelação dos palpites alheios (anti-trapaça): liberados a partir de
+// 2h antes do início de cada jogo (ou quando ele termina).
+const REVEAL_LEAD_MS = 2 * 60 * 60 * 1000;
 function lockInfo(pool, matches) {
   const kickoffs = matches.map((m) => new Date(m.kickoff).getTime()).filter((n) => !Number.isNaN(n));
   const first = kickoffs.length ? Math.min(...kickoffs) : null;
@@ -359,7 +362,7 @@ app.get('/api/pools/:slug/participants/:name', wrap(async (req, res) => {
        FROM predictions pr JOIN matches m ON m.id = pr.match_id
       WHERE pr.participant_id = $1`, [p.id]);
   const predictions = rows
-    .filter((r) => r.finished || new Date(r.kickoff).getTime() <= now) // jogo já começou ou encerrou
+    .filter((r) => r.finished || new Date(r.kickoff).getTime() - REVEAL_LEAD_MS <= now) // a partir de 2h antes
     .map((r) => ({ match_id: r.match_id, home_score: r.home_score, away_score: r.away_score, points: r.points }));
   const quals = await all('SELECT group_label, points FROM qualifiers WHERE participant_id = $1', [p.id]);
   const total = rows.reduce((s, r) => s + Number(r.points), 0) + quals.reduce((s, q) => s + Number(q.points), 0);
@@ -372,7 +375,7 @@ app.get('/api/pools/:slug/matches/:id/predictions', wrap(async (req, res) => {
   const pool = await getPool(req, res); if (!pool) return;
   const m = await get('SELECT * FROM matches WHERE id = $1 AND pool_id = $2', [req.params.id, pool.id]);
   if (!m) return res.status(404).json({ error: 'Partida não encontrada.' });
-  const started = !!m.finished || new Date(m.kickoff).getTime() <= Date.now();
+  const started = !!m.finished || new Date(m.kickoff).getTime() - REVEAL_LEAD_MS <= Date.now();
   if (!started) return res.json({ match: matchPublic(m), revealed: false, predictions: [] });
   const rows = await all(
     `SELECT pa.name, pa.avatar, pr.home_score, pr.away_score, pr.points
