@@ -287,10 +287,10 @@ function startPolling() {
       // o banner ao vivo (fixo embaixo do hero, em toda aba) é barato e sensível ao
       // relógio, então atualiza sempre; o resto só se os DADOS mudaram (sem reload à toa).
       refreshLiveBanner();
+      if (changed) { PoolState.standings = null; refreshStatusBar(); }
       if (!changed || PoolState.tab === 'palpites') return;
       if (PoolState.tab === 'chave') renderBracket();
       else if (PoolState.tab === 'ranking') renderRanking();
-      else if (PoolState.tab === 'desempenho') renderDesempenho();
     } catch (_) { /* silencioso */ }
   }, 30000);
 }
@@ -360,7 +360,6 @@ function drawPoolShell() {
   const isAdmin = data.isAdmin;
   const tabs = [
     ['palpites', '🎯 Palpites'],
-    ['desempenho', '📈 Desempenho'],
     ['partidas', '📅 Partidas'],
     ['chave', '🗝️ Chave'],
     ['ranking', '📊 Ranking'],
@@ -369,6 +368,7 @@ function drawPoolShell() {
 
   const prize = (data.participants.length * 50).toLocaleString('pt-BR');
   $('#app').innerHTML = `
+    <div id="status-bar"></div>
     <section class="card hero">
       <h1>${esc(data.pool.name)}</h1>
       <p>👥 ${data.participants.length} participante(s) · 💰 R$ ${prize} em prêmios</p>
@@ -392,17 +392,23 @@ function drawPoolShell() {
   `;
   wireLiveCards($('#live-banner'));
   $('#tabs').querySelectorAll('button').forEach((b) => {
-    b.onclick = () => { PoolState.tab = b.dataset.tab; drawPoolShell(); };
+    b.onclick = () => { PoolState.tab = b.dataset.tab; window.scrollTo(0, 0); drawPoolShell(); };
   });
   refreshRemindBtn();
+  if (!window._hdrScroll) {
+    window._hdrScroll = true;
+    window.addEventListener('scroll', () => {
+      document.body.classList.toggle('hdr-shrink', window.scrollY > 60);
+    }, { passive: true });
+  }
   const rb = $('#btn-remind'); if (rb) rb.onclick = toggleReminders;
 
   if (PoolState.tab === 'palpites') renderPalpites();
-  else if (PoolState.tab === 'desempenho') renderDesempenho();
   else if (PoolState.tab === 'partidas') renderPartidas();
   else if (PoolState.tab === 'chave') renderBracket();
   else if (PoolState.tab === 'ranking') renderRanking();
   else if (PoolState.tab === 'admin') renderAdmin();
+  refreshStatusBar();
 }
 
 // ---------- aba: palpites ----------
@@ -508,6 +514,38 @@ function liveBannerHtml() {
 function wireLiveCards(container) {
   container.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
 }
+// Barra de status fixa (sua posição/pontos/variação) — visível em todas as abas.
+async function refreshStatusBar() {
+  const el = $('#status-bar'); if (!el) return;
+  if (!PoolState.me) { el.innerHTML = ''; return; }
+  try {
+    const now = Date.now();
+    if (!PoolState.standings || now - PoolState.standings.at > 12000) {
+      const [lb, hist] = await Promise.all([
+        api('GET', `/api/pools/${PoolState.slug}/leaderboard`),
+        api('GET', `/api/pools/${PoolState.slug}/history`).catch(() => ({ rounds: [] })),
+      ]);
+      PoolState.standings = { at: now, board: lb.leaderboard || [], rounds: hist.rounds || [] };
+    }
+    const board = PoolState.standings.board, meName = PoolState.me.name;
+    const idx = board.findIndex((r) => r.name === meName);
+    if (idx < 0) { el.innerHTML = ''; return; }
+    const me = board[idx];
+    const rounds = PoolState.standings.rounds;
+    const last = rounds[rounds.length - 1];
+    const delta = last ? (last.board.find((b) => b.name === meName)?.delta ?? 0) : 0;
+    el.innerHTML = `<button class="sb-inner" id="sb-go" title="Ver ranking completo">
+      ${avatarImg(me.avatar, me.name, 'av sm')}
+      <span class="sb-rank">${idx + 1}º <span class="muted">/ ${board.length}</span></span>
+      ${rounds.length >= 2 ? moveBadge(delta) : ''}
+      <span class="sb-name">${esc(me.name)}</span>
+      <span class="sb-pts">${me.total} <small>pts</small></span>
+    </button>`;
+    const go = $('#sb-go');
+    if (go) go.onclick = () => { if (PoolState.tab !== 'ranking') { PoolState.tab = 'ranking'; window.scrollTo(0, 0); drawPoolShell(); } };
+  } catch (_) { /* silencioso */ }
+}
+
 // Atualiza o bloco "ao vivo" sem re-renderizar a aba inteira. Se o conjunto de
 // jogos ao vivo mudou, re-renderiza; senão, só atualiza placar e recarrega os
 // painéis abertos (pra pontuação parcial acompanhar o placar).
@@ -592,7 +630,9 @@ async function renderPalpites() {
     const badge = q && q.points ? `<span class="pill pts">+${q.points}</span>` : '';
     html += `<div class="card group-card" id="group-${g}">
       <h3>Grupo ${g} ${badge}</h3>
-      <div class="stand-wrap" id="stand-${g}">${standHtml(g)}</div>
+      <details class="group-stand"><summary>📊 Classificação ao vivo</summary>
+        <div class="stand-wrap" id="stand-${g}">${standHtml(g)}</div>
+      </details>
       <div class="gmatches">
         ${matches.filter((m) => m.stage === 'group' && m.group_label === g).map(matchRow).join('')}
       </div>
@@ -780,8 +820,9 @@ function renderAuth(view, errMsg = '') {
       store.setPart(PoolState.slug, { token: r.token, name: r.name });
       store.setHome(PoolState.slug); // login persistente: este vira o bolão "casa"
       PoolState.me = { token: r.token, name: r.name };
+      PoolState.standings = null;
       toast(`Bem-vindo(a), ${r.name}! ⚽`);
-      renderPalpites();
+      drawPoolShell();
     } catch (e) { toast(e.message, true); }
   };
   $('#a-join').onclick = () => handle('join');
@@ -1070,7 +1111,7 @@ async function renderRanking() {
     const aprov = (r) => maxSoFar ? Math.round((r.match_pts / maxSoFar) * 100) + '%' : '—';
 
     const table = `<div class="card"><h3>📊 Classificação</h3>
-      <p class="muted tiebreak-note">Empate em pontos? Desempata por <b>mais placares exatos</b>. Toque num nome para comparar com você.</p>
+      <p class="muted tiebreak-note">Toque no <b>seu nome</b> pra ver seu desempenho jogo a jogo; em <b>outro nome</b> pra comparar. Empate em pontos desempata por mais placares exatos.</p>
       <div class="board-wrap"><table class="board"><thead><tr>
         <th class="num">#</th>${hasMoves ? '<th class="num" title="Variação na última rodada">↕</th>' : ''}<th>Participante</th>
         <th class="num">Jogos</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th><th class="num">Total</th>
@@ -1088,7 +1129,10 @@ async function renderRanking() {
       + raceChartHtml(rounds, leaderboard, meName) + tiebreakHtml();
 
     view.querySelectorAll('.board-row').forEach((tr) => {
-      tr.onclick = () => openCompare(tr.dataset.name);
+      tr.onclick = () => {
+        if (PoolState.me && tr.dataset.name === PoolState.me.name) toggleOwnPerf(tr);
+        else openCompare(tr.dataset.name);
+      };
     });
     // dispara a animação do pódio no próximo frame
     requestAnimationFrame(() => view.querySelectorAll('.pod-col').forEach((c) => c.classList.add('rise')));
@@ -1160,6 +1204,64 @@ function tiebreakHtml() {
   </div>`;
 }
 
+// Clicar no seu próprio nome no ranking expande seu desempenho ali mesmo
+// (substitui a antiga aba Desempenho).
+async function toggleOwnPerf(tr) {
+  const nxt = tr.nextElementSibling;
+  if (nxt && nxt.classList.contains('perf-exp')) { nxt.remove(); tr.classList.remove('exp-open'); return; }
+  tr.parentElement.querySelectorAll('.perf-exp').forEach((e) => e.remove());
+  tr.parentElement.querySelectorAll('.exp-open').forEach((e) => e.classList.remove('exp-open'));
+  tr.classList.add('exp-open');
+  const exp = document.createElement('tr');
+  exp.className = 'perf-exp';
+  exp.innerHTML = `<td colspan="${tr.children.length}"><div class="perf-inline center muted">Carregando seu desempenho…</div></td>`;
+  tr.after(exp);
+  try {
+    const mine = await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token });
+    exp.querySelector('td').innerHTML = buildPerfPanel(mine);
+    const sb = exp.querySelector('.perf-share');
+    if (sb) sb.onclick = () => shareCard(PoolState._perfShare);
+  } catch (e) { exp.querySelector('td').innerHTML = `<div class="center" style="padding:.6rem">${esc(e.message)}</div>`; }
+}
+
+function buildPerfPanel(mine) {
+  const scoring = PoolState.data.pool.scoring;
+  const matches = PoolState.data.matches || [];
+  const preds = new Map(mine.predictions.map((p) => [p.match_id, p]));
+  const finished = matches.filter((m) => m.finished && m.home_score != null).sort((a, b) => new Date(b.kickoff) - new Date(a.kickoff));
+  let exatos = 0, ptsGames = 0, maxGames = 0, acertos = 0;
+  for (const m of finished) {
+    const p = preds.get(m.id); maxGames += scoring.pts_exact;
+    if (p) { ptsGames += p.points || 0; if (p.points > 0) acertos++; if (p.home_score === m.home_score && p.away_score === m.away_score) exatos++; }
+  }
+  const qualPts = mine.qualifiers.reduce((s, q) => s + q.points, 0);
+  const aprov = maxGames ? Math.round((ptsGames / maxGames) * 100) : 0;
+  const withPick = finished.filter((m) => preds.has(m.id)).length;
+  PoolState._perfShare = { name: mine.name, total: mine.total, exatos, aprov, qualPts, poolName: PoolState.data.pool.name };
+  let html = `<div class="perf-inline">
+    <div class="perf-grid">
+      <div class="perf-stat"><span class="pv">${mine.total}</span><span class="pl">Pontos</span></div>
+      <div class="perf-stat"><span class="pv">🎯 ${exatos}</span><span class="pl">Exatos</span></div>
+      <div class="perf-stat"><span class="pv">${acertos}/${withPick}</span><span class="pl">Pontuados</span></div>
+      <div class="perf-stat"><span class="pv">${aprov}%</span><span class="pl">Aproveit.</span></div>
+      <div class="perf-stat"><span class="pv">🏆 ${qualPts}</span><span class="pl">Avanço</span></div>
+    </div>`;
+  if (finished.length) {
+    html += `<div class="perf-list">${finished.map((m) => {
+      const p = preds.get(m.id); const r = pickReason(p, m, scoring);
+      return `<div class="perf-row">
+        <div class="pr-game">${flag(m.home_team)} ${esc(m.home_team)} <span class="cmp-x">×</span> ${esc(m.away_team)} ${flag(m.away_team)}<div class="muted pr-date">${esc(m.round_label || '')}</div></div>
+        <div class="pr-mid"><span class="pr-real">${m.home_score} x ${m.away_score}</span><span class="pr-yours">${p ? `${p.home_score} x ${p.away_score}` : '—'}</span></div>
+        <div class="pr-pick"><span class="reason ${r.cls}">${r.icon} ${esc(r.label)}</span></div>
+      </div>`;
+    }).join('')}</div>`;
+  } else {
+    html += `<p class="muted center">Nenhum jogo encerrado ainda — seu desempenho aparece aqui conforme a Copa rola.</p>`;
+  }
+  html += `<div class="center" style="margin-top:.6rem"><button class="btn-soft btn-sm perf-share">📸 Compartilhar meu card</button></div></div>`;
+  return html;
+}
+
 // Modal de comparação: seus palpites vs. os de outro participante (só jogos já iniciados).
 async function openCompare(name) {
   const meName = PoolState.me?.name;
@@ -1217,7 +1319,7 @@ async function openCompare(name) {
   }
 }
 
-// ---------- aba: desempenho (palpites vs resultado) ----------
+// ---------- desempenho (palpites vs resultado) — usado inline no ranking ----------
 function pickReason(pred, m, scoring) {
   if (!pred) return { label: 'sem palpite', cls: 'miss', icon: '➖' };
   const ph = pred.home_score, pa = pred.away_score, rh = m.home_score, ra = m.away_score;
@@ -1228,112 +1330,6 @@ function pickReason(pred, m, scoring) {
   return { label: `vencedor +${scoring.pts_outcome}`, cls: 'out', icon: '✅' };
 }
 
-async function renderDesempenho() {
-  const view = $('#tabview');
-  if (!PoolState.me) {
-    view.innerHTML = `<div class="card center"><h3>📈 Desempenho</h3>
-      <p class="muted">Entre no bolão para acompanhar seus acertos jogo a jogo.</p>
-      <button class="btn-primary" id="go-palpites">Ir para Meus palpites</button></div>`;
-    const b = $('#go-palpites'); if (b) b.onclick = () => { PoolState.tab = 'palpites'; drawPoolShell(); };
-    return;
-  }
-
-  view.innerHTML = `<div class="card center"><p>Carregando seu desempenho…</p></div>`;
-  let mine;
-  try {
-    mine = await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token });
-  } catch (e) {
-    store.clearPart(PoolState.slug); PoolState.me = null;
-    view.innerHTML = `<div class="card center">${esc(e.message)}</div>`;
-    return;
-  }
-
-  const scoring = PoolState.data.pool.scoring;
-  const matches = PoolState.data.matches || [];
-  const locks = PoolState.data.stageLocks || {};
-  const globalLocked = !!(PoolState.data.lock && PoolState.data.lock.locked);
-  const preds = new Map(mine.predictions.map((p) => [p.match_id, p]));
-  const now = Date.now();
-
-  const finished = matches.filter((m) => m.finished && m.home_score != null).sort((a, b) => new Date(b.kickoff) - new Date(a.kickoff));
-  const live = matches.filter((m) => !m.finished && new Date(m.kickoff).getTime() <= now && m.home_team && m.away_team);
-  const isOpenForPick = (m) => m.home_team && m.away_team && !m.finished && new Date(m.kickoff).getTime() > now && !locks[m.stage] && !globalLocked;
-  const missing = matches.filter(isOpenForPick).filter((m) => !preds.has(m.id));
-
-  // métricas
-  let exatos = 0, ptsGames = 0, maxGames = 0, acertos = 0;
-  for (const m of finished) {
-    const p = preds.get(m.id);
-    maxGames += scoring.pts_exact;
-    if (p) {
-      ptsGames += p.points || 0;
-      if (p.points > 0) acertos++;
-      if (p.home_score === m.home_score && p.away_score === m.away_score) exatos++;
-    }
-  }
-  const qualPts = mine.qualifiers.reduce((s, q) => s + q.points, 0);
-  const aprov = maxGames ? Math.round((ptsGames / maxGames) * 100) : 0;
-  const withPick = finished.filter((m) => preds.has(m.id)).length;
-
-  let html = `
-    <div class="card">
-      <div class="row" style="align-items:center">
-        <div><b>📈 ${esc(mine.name)}</b></div>
-        <div style="text-align:right;flex:0"><button class="btn-soft btn-sm" id="btn-share">📸 Compartilhar</button></div>
-      </div>
-      <div class="perf-grid">
-        <div class="perf-stat"><span class="pv">${mine.total}</span><span class="pl">Pontos</span></div>
-        <div class="perf-stat"><span class="pv">🎯 ${exatos}</span><span class="pl">Placares exatos</span></div>
-        <div class="perf-stat"><span class="pv">${acertos}/${withPick}</span><span class="pl">Jogos pontuados</span></div>
-        <div class="perf-stat"><span class="pv">${aprov}%</span><span class="pl">Aproveitamento</span></div>
-        <div class="perf-stat"><span class="pv">🏆 ${qualPts}</span><span class="pl">Quem avança</span></div>
-      </div>
-    </div>`;
-
-  if (live.length) {
-    html += `<div class="card live-card"><h3><span class="live-dot"></span>Ao vivo / em jogo agora</h3>
-      ${live.map((m) => {
-        const p = preds.get(m.id);
-        const real = m.home_score != null ? `${m.home_score} x ${m.away_score}` : '—';
-        return `<div class="perf-row live">
-          <div class="pr-game">${flag(m.home_team)} ${esc(m.home_team)} <span class="cmp-x">×</span> ${esc(m.away_team)} ${flag(m.away_team)}</div>
-          <div class="pr-mid"><span class="pill live">${real}</span></div>
-          <div class="pr-pick">${p ? `seu: <b>${p.home_score} x ${p.away_score}</b>` : '<span class="muted">sem palpite</span>'}</div>
-        </div>`;
-      }).join('')}</div>`;
-  }
-
-  if (missing.length && !globalLocked) {
-    html += `<div class="card missing-card"><h3>⚠️ Palpites faltando (${missing.length})</h3>
-      <p class="muted">Jogos abertos que você ainda não palpitou:</p>
-      <div class="miss-list">${missing.slice(0, 12).map((m) => `<span class="miss-chip">${flag(m.home_team)} ${esc(m.home_team)} × ${esc(m.away_team)} ${flag(m.away_team)}</span>`).join('')}</div>
-      ${missing.length > 12 ? `<p class="muted">…e mais ${missing.length - 12}.</p>` : ''}
-      <button class="btn-soft btn-sm" id="go-fill">Ir palpitar</button></div>`;
-  }
-
-  if (finished.length) {
-    html += `<div class="card"><h3>🧾 Palpites × Resultado</h3>
-      <div class="perf-list">${finished.map((m) => {
-        const p = preds.get(m.id);
-        const r = pickReason(p, m, scoring);
-        return `<div class="perf-row">
-          <div class="pr-game">${flag(m.home_team)} ${esc(m.home_team)} <span class="cmp-x">×</span> ${esc(m.away_team)} ${flag(m.away_team)}
-            <div class="muted pr-date">${esc(m.round_label || '')}</div></div>
-          <div class="pr-mid">
-            <span class="pr-real">${m.home_score} x ${m.away_score}</span>
-            <span class="pr-yours">${p ? `${p.home_score} x ${p.away_score}` : '—'}</span>
-          </div>
-          <div class="pr-pick"><span class="reason ${r.cls}">${r.icon} ${esc(r.label)}</span></div>
-        </div>`;
-      }).join('')}</div></div>`;
-  } else {
-    html += `<div class="card center"><p class="muted">Nenhum jogo encerrado ainda. Seu placar exato e aproveitamento aparecem aqui conforme a Copa rola.</p></div>`;
-  }
-
-  view.innerHTML = html;
-  const sh = $('#btn-share'); if (sh) sh.onclick = () => shareCard({ name: mine.name, total: mine.total, exatos, aprov, qualPts, poolName: PoolState.data.pool.name });
-  const gf = $('#go-fill'); if (gf) gf.onclick = () => { PoolState.tab = 'palpites'; drawPoolShell(); };
-}
 
 // Gera um card (imagem) com o resumo do participante para mandar no grupo.
 async function shareCard(s) {

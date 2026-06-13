@@ -479,6 +479,38 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 #live-banner:not(:empty) { margin-bottom: 1rem; }
 #live-banner .live-now-card { margin-bottom: 0; }
 
+/* ---------- barra de status fixa (sua posição) ---------- */
+#status-bar { position: sticky; top: 46px; z-index: 16; margin-bottom: 0.8rem; }
+#status-bar:empty { display: none; margin: 0; }
+.sb-inner { width: 100%; display: flex; align-items: center; gap: 0.55rem; background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 0.4rem 0.7rem; color: var(--ink); box-shadow: var(--shadow); font-size: 0.9rem; }
+.sb-rank { font-weight: 800; white-space: nowrap; }
+.sb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.sb-pts { font-weight: 800; color: var(--gold); white-space: nowrap; }
+.sb-pts small { color: var(--muted); font-weight: 600; }
+
+/* ---------- hero que encolhe ao rolar ---------- */
+.hero { transition: padding 0.2s ease; }
+.hero h1 { transition: font-size 0.2s ease; }
+.hdr-shrink .hero { padding-top: 0.6rem; padding-bottom: 0.6rem; }
+.hdr-shrink .hero h1 { font-size: 1.05rem; margin-bottom: 0.05rem; }
+.hdr-shrink .hero > p, .hdr-shrink .hero-actions { display: none; }
+
+/* ---------- classificação do grupo recolhível ---------- */
+.group-stand { margin-bottom: 0.5rem; }
+.group-stand > summary { cursor: pointer; list-style: none; font-size: 0.8rem; color: var(--green-bright); font-weight: 600; padding: 0.2rem 0; }
+.group-stand > summary::-webkit-details-marker { display: none; }
+.group-stand > summary::before { content: '▸ '; }
+.group-stand[open] > summary::before { content: '▾ '; }
+
+/* ---------- desempenho inline (no ranking) ---------- */
+tr.board-row.exp-open > td { background: var(--card2); }
+tr.perf-exp > td { padding: 0; background: var(--bg2); border-bottom: 2px solid var(--green); }
+.perf-inline { padding: 0.6rem; }
+.perf-inline .perf-grid { grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 0.4rem; margin-top: 0; }
+.perf-inline .perf-stat { padding: 0.45rem 0.3rem; }
+.perf-inline .perf-stat .pv { font-size: 1rem; }
+.perf-inline .perf-list { margin-top: 0.6rem; }
+
 /* ---------- pódio animado ---------- */
 .podium-card .podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; align-items: end; margin-top: 0.7rem; }
 .pod-col { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
