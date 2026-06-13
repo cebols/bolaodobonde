@@ -1073,17 +1073,22 @@ async function renderRanking() {
     const deltaByName = new Map((last?.board || []).map((r) => [r.name, r.delta]));
     const hasMoves = rounds.length >= 2;
 
+    // aproveitamento: pontos de jogos ÷ máximo possível nos jogos já encerrados
+    const finishedCount = (PoolState.data.matches || []).filter((m) => m.finished).length;
+    const maxSoFar = finishedCount * (PoolState.data.pool.scoring.pts_exact || 10);
+    const aprov = (r) => maxSoFar ? Math.round((r.match_pts / maxSoFar) * 100) + '%' : '—';
+
     const table = `<div class="card"><h3>📊 Classificação</h3>
       <p class="muted tiebreak-note">Empate em pontos? Desempata por <b>mais placares exatos</b>. Toque num nome para comparar com você.</p>
       <div class="board-wrap"><table class="board"><thead><tr>
         <th class="num">#</th>${hasMoves ? '<th class="num" title="Variação na última rodada">↕</th>' : ''}<th>Participante</th>
-        <th class="num">Jogos</th><th class="num">Avanço</th><th class="num">Exatos</th><th class="num">Total</th>
+        <th class="num">Jogos</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th><th class="num">Total</th>
       </tr></thead><tbody>
       ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''} board-row" data-name="${esc(r.name)}">
         <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
         ${hasMoves ? `<td class="num">${moveBadge(deltaByName.get(r.name) ?? 0)}</td>` : ''}
         <td><span class="name-cell">${avatarImg(r.avatar, r.name, 'av rk')}<span class="nm">${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span></td>
-        <td class="num">${r.match_pts}</td><td class="num">${r.qual_pts}</td>
+        <td class="num">${r.match_pts}</td><td class="num">${aprov(r)}</td>
         <td class="num">${r.exatos}</td><td class="num"><b>${r.total}</b></td>
       </tr>`).join('')}
       </tbody></table></div></div>`;
