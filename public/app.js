@@ -249,6 +249,7 @@ async function renderPool(slug) {
     return;
   }
   PoolState.data = data;
+  PoolState.dataFp = dataFingerprint(data);
   PoolState.me = store.getPart(slug);
   store.addRecent(slug, data.pool.name);
 
@@ -261,6 +262,15 @@ async function renderPool(slug) {
 // e re-renderiza as abas só-leitura (Chave/Ranking) sem atrapalhar quem digita palpites.
 let POLL_HANDLE = null;
 function stopPolling() { if (POLL_HANDLE) { clearInterval(POLL_HANDLE); POLL_HANDLE = null; } }
+// Resumo do que importa pra tela: se nada disso mudou, não re-renderiza nada.
+function dataFingerprint(d) {
+  return JSON.stringify({
+    m: (d.matches || []).map((m) => [m.id, m.home_team, m.away_team, m.home_score, m.away_score, m.finished ? 1 : 0]),
+    p: d.participants,
+    lk: d.lock ? [d.lock.mode, d.lock.locked] : null,
+  });
+}
+
 function startPolling() {
   stopPolling();
   remindersTick();
@@ -270,13 +280,17 @@ function startPolling() {
     try {
       const adminToken = store.getAdmin(PoolState.slug);
       const fresh = await api('GET', `/api/pools/${PoolState.slug}`, null, adminToken ? { 'x-admin-token': adminToken } : {});
+      const fp = dataFingerprint(fresh);
+      const changed = fp !== PoolState.dataFp;
       PoolState.data = fresh;
+      PoolState.dataFp = fp;
+      // o banner ao vivo é barato e sensível ao relógio (jogo cruzando o horário),
+      // então atualiza sempre; o resto só se os DADOS mudaram (sem reload à toa).
+      if (PoolState.tab === 'palpites') { refreshLiveBanner(); return; }
+      if (!changed) return;
       if (PoolState.tab === 'chave') renderBracket();
       else if (PoolState.tab === 'ranking') renderRanking();
       else if (PoolState.tab === 'desempenho') renderDesempenho();
-      else if (PoolState.tab === 'palpites') refreshLiveBanner();
-      // a aba "palpites" não é re-renderizada inteira (só o bloco "ao vivo") para
-      // não apagar o que está sendo digitado.
     } catch (_) { /* silencioso */ }
   }, 30000);
 }
@@ -931,9 +945,22 @@ function horseSvg(r) {
   </div>`;
 }
 
-// Bandeira do Vasco (SVG inline) — vai pro lanterna da corrida. 😂
+// Bandeira do Vasco (SVG inline, baseada na oficial: faixa diagonal, cruz de
+// malta e as 8 estrelas douradas) — vai pro lanterna da corrida. 😂
 function vascoSvg() {
-  return `<svg viewBox="0 0 22 15" class="vasco-svg"><rect width="22" height="15" fill="#0c0c0c"/><polygon points="0,15 5.5,15 22,0 16.5,0" fill="#fff"/><path d="M10.2 4.6 h1.8 v1.8 h1.8 v1.8 h-1.8 v1.8 h-1.8 V8.2 H8.4 V6.4 h1.8 Z" fill="#c1121f"/></svg>`;
+  const star = (x, y) => `<text x="${x}" y="${y}" font-size="4.6" fill="#f5c542" text-anchor="middle">★</text>`;
+  const stars = [25.5, 29.5, 33.5, 37.5].map((x) => star(x, 6.2) + star(x, 11.4)).join('');
+  return `<svg viewBox="0 0 42 27" class="vasco-svg">
+    <rect width="42" height="27" fill="#000"/>
+    <polygon points="0,27 10,27 42,1.5 32,1.5" fill="#fff"/>
+    <g fill="#d22730">
+      <path d="M21 13.5 L16.2 7.6 L25.8 7.6 Z"/>
+      <path d="M21 13.5 L16.2 19.4 L25.8 19.4 Z"/>
+      <path d="M21 13.5 L14.6 8.7 L14.6 18.3 Z"/>
+      <path d="M21 13.5 L27.4 8.7 L27.4 18.3 Z"/>
+    </g>
+    ${stars}
+  </svg>`;
 }
 
 // Frames da corrida: posição na pista (x = pts/líder), colocação (raia) e pontos
@@ -968,7 +995,13 @@ function raceChartHtml(rounds, board, meName) {
   return `<div class="card race-card">
     <h3>🏇 Corrida pelo título</h3>
     <p class="muted">A corrida refaz a disputa rodada a rodada — cada troca de raia é uma ultrapassagem no ranking. O lanterna carrega a bandeira do Vasco. 😜</p>
-    <div class="race-head"><span class="muted" id="race-day"></span><button class="btn-soft btn-sm" id="race-replay">▶ Replay</button></div>
+    <div class="race-head">
+      <span class="muted" id="race-day"></span>
+      <div class="race-controls">
+        <input type="range" id="race-slider" min="0" max="${PoolState.race.frames.length - 1}" step="1" value="0" aria-label="Rodada" />
+        <button class="btn-soft btn-sm" id="race-replay">▶ Replay</button>
+      </div>
+    </div>
     <div class="track" id="race-track" style="height:${H}px">
       <span class="track-flag">🏁</span>
       ${board.map((_, i) => `<div class="lane-bg" style="top:${i * RACE_LANE_H + 4}px;height:${RACE_LANE_H - 8}px"></div>`).join('')}
@@ -988,6 +1021,7 @@ function raceApplyFrame(fi, animate = true) {
   const f = race.frames[fi], prev = race.frames[fi - 1];
   const day = $('#race-day');
   if (day) day.textContent = fi === 0 ? '🚩 Largada' : `📅 ${f.label} · rodada ${fi}/${race.frames.length - 1}`;
+  const slider = $('#race-slider'); if (slider) slider.value = fi;
   // lanterna deste frame (leva a bandeira do Vasco)
   let worst = null;
   for (const n of Object.keys(f.pos)) if (!worst || f.pos[n].rank > f.pos[worst].rank) worst = n;
@@ -1006,8 +1040,10 @@ function raceApplyFrame(fi, animate = true) {
   if (!animate) { void track.offsetWidth; track.classList.remove('notrans'); }
 }
 function playRace() {
-  const race = PoolState.race; if (!race || !$('#race-track')) return;
+  const race = PoolState.race; const track = $('#race-track');
+  if (!race || !track) return;
   clearTimeout(RACE_TIMER);
+  track.classList.remove('scrub');
   raceApplyFrame(0, false);
   const step = (fi) => {
     raceApplyFrame(fi, true);
@@ -1064,6 +1100,14 @@ async function renderRanking() {
     // estado final pra não reiniciar sozinha — replay manual no botão.
     const rp = $('#race-replay');
     if (rp) rp.onclick = playRace;
+    // slider: controla a corrida manualmente, rodada a rodada (pausa o autoplay)
+    const rs = $('#race-slider');
+    if (rs) rs.oninput = () => {
+      clearTimeout(RACE_TIMER);
+      PoolState.racePlayed = true;
+      const tk = $('#race-track'); if (tk) tk.classList.add('scrub'); // transição curta no arrasto
+      raceApplyFrame(Number(rs.value), true);
+    };
     if ($('#race-track')) {
       if (PoolState.racePlayed) raceApplyFrame(PoolState.race.frames.length - 1, false);
       else requestAnimationFrame(() => playRace());

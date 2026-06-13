@@ -490,9 +490,13 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .pod-pos { font-size: 0.72rem; }
 
 /* ---------- corrida pelo título (cavalos) ---------- */
-.race-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin: 0.2rem 0 0.4rem; font-size: 0.82rem; min-height: 2rem; }
-.race-card .track { position: relative; margin-top: 0.9rem; }
-.track-flag { position: absolute; top: -1.25rem; right: 0.15rem; font-size: 1.05rem; z-index: 1; }
+.race-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; margin: 0.2rem 0 0.4rem; font-size: 0.82rem; min-height: 2rem; flex-wrap: wrap; }
+.race-head #race-day { flex: 0 0 auto; white-space: nowrap; }
+.race-controls { display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 180px; justify-content: flex-end; }
+#race-slider { flex: 1; max-width: 230px; accent-color: var(--green); cursor: pointer; }
+.track.scrub .runner { transition: left 0.45s ease, top 0.4s ease; }
+.race-card .track { position: relative; margin-top: 1.8rem; }
+.track-flag { position: absolute; top: -1.4rem; right: 0.15rem; font-size: 1.05rem; z-index: 1; }
 .lane-bg {
   position: absolute; left: 0; right: 0; border-radius: 8px;
   background: repeating-linear-gradient(90deg, #15271b, #15271b 16px, #122017 16px, #122017 32px);
@@ -532,9 +536,9 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .runner.me .jockey .av { box-shadow: 0 0 0 2px var(--gold); }
 
 /* bandeira do Vasco do lanterna (mastro + flâmula tremulando) */
-.vasco { position: absolute; top: -14px; left: 4px; width: 22px; }
-.vasco::before { content: ''; position: absolute; left: -2px; top: 0; width: 2px; height: 30px; background: #8a7b5c; border-radius: 1px; }
-.vasco-svg { width: 22px; height: 15px; display: block; border-radius: 1px; box-shadow: 0 0 0 1px rgba(255,255,255,0.18); transform-origin: left center; animation: flag-wave 0.8s ease-in-out infinite; }
+.vasco { position: absolute; top: -24px; left: -8px; width: 36px; z-index: 3; }
+.vasco::before { content: ''; position: absolute; left: -2.5px; top: 0; width: 2.5px; height: 44px; background: #8a7b5c; border-radius: 1px; }
+.vasco-svg { width: 36px; height: 23px; display: block; border-radius: 1.5px; box-shadow: 0 0 0 1px rgba(255,255,255,0.22), 0 1px 4px rgba(0,0,0,0.5); transform-origin: left center; animation: flag-wave 0.8s ease-in-out infinite; }
 @keyframes flag-wave { 0%,100% { transform: skewY(-4deg); } 50% { transform: skewY(4deg); } }
 
 .leg { transform-box: fill-box; transform-origin: top center; }
