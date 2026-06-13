@@ -46,23 +46,33 @@ function assertReady() {
   }
 }
 
-// Converte placeholders $1,$2 -> ? para o SQLite.
-const toSqlite = (sql) => sql.replace(/\$\d+/g, '?');
+// Converte placeholders $1,$2,... -> ? para o SQLite, REMAPEANDO os parâmetros pela
+// ordem de aparição. Os "?" do SQLite são posicionais: se os $N não estiverem em
+// ordem crescente (ou forem reutilizados), bindar a array original trocaria os
+// valores. Aqui montamos a array de params na ordem exata dos placeholders.
+function toSqlite(sql, params) {
+  const mapped = [];
+  const text = sql.replace(/\$(\d+)/g, (_, n) => { mapped.push(params[Number(n) - 1]); return '?'; });
+  return { text, params: mapped };
+}
 
 export async function all(sql, params = []) {
   assertReady();
   if (USE_PG) return (await pgPool.query(sql, params)).rows;
-  return sqlite.prepare(toSqlite(sql)).all(...params);
+  const q = toSqlite(sql, params);
+  return sqlite.prepare(q.text).all(...q.params);
 }
 export async function get(sql, params = []) {
   assertReady();
   if (USE_PG) return (await pgPool.query(sql, params)).rows[0] || null;
-  return sqlite.prepare(toSqlite(sql)).get(...params) || null;
+  const q = toSqlite(sql, params);
+  return sqlite.prepare(q.text).get(...q.params) || null;
 }
 export async function run(sql, params = []) {
   assertReady();
   if (USE_PG) { const r = await pgPool.query(sql, params); return r.rows[0] || {}; }
-  const info = sqlite.prepare(toSqlite(sql)).run(...params);
+  const q = toSqlite(sql, params);
+  const info = sqlite.prepare(q.text).run(...q.params);
   return { changes: info.changes, lastID: info.lastInsertRowid };
 }
 
