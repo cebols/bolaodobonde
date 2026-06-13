@@ -284,10 +284,10 @@ function startPolling() {
       const changed = fp !== PoolState.dataFp;
       PoolState.data = fresh;
       PoolState.dataFp = fp;
-      // o banner ao vivo é barato e sensível ao relógio (jogo cruzando o horário),
-      // então atualiza sempre; o resto só se os DADOS mudaram (sem reload à toa).
-      if (PoolState.tab === 'palpites') { refreshLiveBanner(); return; }
-      if (!changed) return;
+      // o banner ao vivo (fixo embaixo do hero, em toda aba) é barato e sensível ao
+      // relógio, então atualiza sempre; o resto só se os DADOS mudaram (sem reload à toa).
+      refreshLiveBanner();
+      if (!changed || PoolState.tab === 'palpites') return;
       if (PoolState.tab === 'chave') renderBracket();
       else if (PoolState.tab === 'ranking') renderRanking();
       else if (PoolState.tab === 'desempenho') renderDesempenho();
@@ -367,25 +367,30 @@ function drawPoolShell() {
   ];
   if (isAdmin) tabs.push(['admin', '⚙️ Admin']);
 
+  const prize = (data.participants.length * 50).toLocaleString('pt-BR');
   $('#app').innerHTML = `
     <section class="card hero">
       <h1>${esc(data.pool.name)}</h1>
-      <p>${data.participants.length} participante(s) · ${data.matches.length} jogos${data.syncEnabled ? ' · 🔄 resultados automáticos' : ''}</p>
-      <div class="scoring-legend">
-        <span>🎯 Placar exato: <b>${data.pool.scoring.pts_exact}</b></span>
-        <span title="Só em jogos com vencedor — empate não conta saldo">↔️ Vencedor + saldo: <b>${data.pool.scoring.pts_goaldiff}</b></span>
-        <span>✅ Acertou o vencedor/empate: <b>${data.pool.scoring.pts_outcome}</b></span>
-        <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
-      </div>
+      <p>👥 ${data.participants.length} participante(s) · 💰 R$ ${prize} em prêmios</p>
       <div class="hero-actions">
         <button id="btn-remind" class="btn-ghost btn-sm">🔔 Lembretes de jogos</button>
+        <details class="scoring-info"><summary>ℹ️ Pontuação</summary>
+          <div class="scoring-legend">
+            <span>🎯 Placar exato: <b>${data.pool.scoring.pts_exact}</b></span>
+            <span title="Só em jogos com vencedor — empate não conta saldo">↔️ Vencedor + saldo: <b>${data.pool.scoring.pts_goaldiff}</b></span>
+            <span>✅ Vencedor/empate: <b>${data.pool.scoring.pts_outcome}</b></span>
+            <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
+          </div>
+        </details>
       </div>
     </section>
+    <div id="live-banner">${liveBannerHtml()}</div>
     <div class="tabs" id="tabs">
       ${tabs.map(([k, label]) => `<button data-tab="${k}" class="${PoolState.tab === k ? 'active' : ''}">${label}</button>`).join('')}
     </div>
     <div id="tabview"></div>
   `;
+  wireLiveCards($('#live-banner'));
   $('#tabs').querySelectorAll('button').forEach((b) => {
     b.onclick = () => { PoolState.tab = b.dataset.tab; drawPoolShell(); };
   });
@@ -565,8 +570,7 @@ async function renderPalpites() {
       </div>
       ${mine.lastSaved ? `<p class="muted save-stamp">💾 Último salvamento: ${esc(fmtDate(new Date(mine.lastSaved).toISOString()))}</p>` : ''}
       ${missing > 0 && !lock.locked ? `<p class="missing-hint">⚠️ Você tem <b>${missing}</b> jogo(s) abertos ainda sem palpite.</p>` : ''}
-    </div>
-    <div id="live-banner">${liveBannerHtml()}</div>`;
+    </div>`;
 
   if (lock.locked) {
     html += `<div class="lock-banner">🔒 <b>Palpites travados.</b> O organizador fechou as apostas — não dá mais para editar os placares.</div>`;
@@ -592,7 +596,6 @@ async function renderPalpites() {
       <div class="gmatches">
         ${matches.filter((m) => m.stage === 'group' && m.group_label === g).map(matchRow).join('')}
       </div>
-      <div class="group-foot"><button class="btn-link-danger" data-clear-group="${g}">🧹 Limpar palpites do grupo ${g}</button></div>
     </div>`;
   }
   html += `</div>`;
@@ -635,13 +638,12 @@ async function renderPalpites() {
 
   if (!lock.locked) {
     html += `<div class="sticky-save">
-      <button id="btn-clear-all" class="btn-link-danger">🧹 Limpar tudo</button>
+      <span class="muted" style="font-size:.8rem">Edite e salve seus palpites dos jogos ainda não iniciados.</span>
       <button id="btn-save" class="btn-gold">💾 Salvar palpites</button>
     </div>`;
   }
 
   view.innerHTML = html;
-  wireLiveCards($('#live-banner'));
 
   $('#btn-logout').onclick = () => {
     store.clearPart(PoolState.slug);
@@ -669,17 +671,6 @@ async function renderPalpites() {
     };
     inp.onfocus = () => inp.select();
   });
-
-  // limpar por grupo
-  view.querySelectorAll('[data-clear-group]').forEach((b) => {
-    b.onclick = () => clearPredictions(b.dataset.clearGroup);
-  });
-  // limpar tudo (com confirmação)
-  const clearAllBtn = $('#btn-clear-all');
-  if (clearAllBtn) clearAllBtn.onclick = async () => {
-    const ok = await confirmModal('Apagar TODOS os seus palpites?', 'Isso remove todos os placares que você ainda pode editar (jogos não iniciados). Não dá pra desfazer.');
-    if (ok) clearPredictions(null);
-  };
 
   const saveBtn = $('#btn-save');
   if (saveBtn) saveBtn.onclick = savePredictions;

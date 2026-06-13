@@ -467,8 +467,17 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .prow .pnm > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- lembretes (hero) ---------- */
-.hero-actions { margin-top: 0.7rem; }
+.hero-actions { margin-top: 0.7rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .btn-ghost.active { background: rgba(255,203,5,0.16); border-color: var(--gold); color: var(--gold); }
+.scoring-info { font-size: 0.85rem; }
+.scoring-info > summary { cursor: pointer; list-style: none; color: #fff; opacity: 0.92; padding: 0.35rem 0.7rem; border: 1px solid rgba(255,255,255,0.4); border-radius: 999px; display: inline-block; }
+.scoring-info > summary::-webkit-details-marker { display: none; }
+.scoring-info[open] > summary { background: rgba(255,255,255,0.12); }
+.scoring-info .scoring-legend { margin-top: 0.6rem; }
+
+/* live banner fixo abaixo do hero (todas as abas) */
+#live-banner:not(:empty) { margin-bottom: 1rem; }
+#live-banner .live-now-card { margin-bottom: 0; }
 
 /* ---------- pódio animado ---------- */
 .podium-card .podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; align-items: end; margin-top: 0.7rem; }
