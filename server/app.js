@@ -271,7 +271,8 @@ function scoreFor(pool, ph, pa, m) {
   const rh = m.home_score, ra = m.away_score;
   if (ph === rh && pa === ra) return pool.pts_exact;
   if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return 0;
-  if (ph - pa === rh - ra) return pool.pts_goaldiff;
+  // saldo só conta em jogos com vencedor (empate não-exato = só acerto do resultado).
+  if (rh !== ra && ph - pa === rh - ra) return pool.pts_goaldiff;
   return pool.pts_outcome;
 }
 

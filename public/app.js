@@ -359,7 +359,7 @@ function drawPoolShell() {
       <p>${data.participants.length} participante(s) · ${data.matches.length} jogos${data.syncEnabled ? ' · 🔄 resultados automáticos' : ''}</p>
       <div class="scoring-legend">
         <span>🎯 Placar exato: <b>${data.pool.scoring.pts_exact}</b></span>
-        <span>↔️ Resultado + saldo: <b>${data.pool.scoring.pts_goaldiff}</b></span>
+        <span title="Só em jogos com vencedor — empate não conta saldo">↔️ Vencedor + saldo: <b>${data.pool.scoring.pts_goaldiff}</b></span>
         <span>✅ Acertou o vencedor/empate: <b>${data.pool.scoring.pts_outcome}</b></span>
         <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
       </div>
@@ -1099,6 +1099,7 @@ function pickReason(pred, m, scoring) {
   const ph = pred.home_score, pa = pred.away_score, rh = m.home_score, ra = m.away_score;
   if (ph === rh && pa === ra) return { label: `placar exato +${scoring.pts_exact}`, cls: 'exact', icon: '🎯' };
   if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return { label: 'errou', cls: 'wrong', icon: '❌' };
+  if (rh === ra) return { label: `acertou o empate +${scoring.pts_outcome}`, cls: 'out', icon: '🤝' };
   if (ph - pa === rh - ra) return { label: `vencedor + saldo +${scoring.pts_goaldiff}`, cls: 'gd', icon: '↔️' };
   return { label: `vencedor +${scoring.pts_outcome}`, cls: 'out', icon: '✅' };
 }
@@ -1595,12 +1596,13 @@ async function renderAdmin() {
       <h3>⚙️ Pontuação</h3>
       <div class="row">
         <div class="field"><label>🎯 Placar exato</label><input type="number" id="s-exact" value="${s.pts_exact}" min="0" max="100" /></div>
-        <div class="field"><label>↔️ Resultado + saldo</label><input type="number" id="s-gd" value="${s.pts_goaldiff}" min="0" max="100" /></div>
+        <div class="field"><label>↔️ Vencedor + saldo</label><input type="number" id="s-gd" value="${s.pts_goaldiff}" min="0" max="100" /></div>
       </div>
       <div class="row">
         <div class="field"><label>✅ Acertou vencedor/empate</label><input type="number" id="s-out" value="${s.pts_outcome}" min="0" max="100" /></div>
         <div class="field"><label>🏆 Quem avança (por time)</label><input type="number" id="s-adv" value="${s.pts_advance}" min="0" max="100" /></div>
       </div>
+      <p class="muted" style="margin:.2rem 0 .6rem">🤝 <b>Empate:</b> o bônus de saldo só vale em jogos com vencedor. Empate certo no placar = exato; empate certo sem o placar = só o acerto do resultado.</p>
       <label style="font-weight:500"><input type="checkbox" id="s-lock" ${data.pool.lock_at_kickoff ? 'checked' : ''} style="width:auto;margin-right:.4rem" />Travar palpites no horário de início do jogo</label>
       <div class="spacer"></div>
       <button id="save-settings" class="btn-primary">Salvar pontuação</button>

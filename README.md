@@ -126,9 +126,13 @@ vercel.json  # roteamento Vercel: /api -> função, resto -> estático
 Para cada jogo, vale **a maior faixa aplicável** (não acumula):
 
 1. Placar exato → `pts_exact`
-2. Mesmo vencedor **e** mesmo saldo de gols → `pts_goaldiff`
-3. Mesmo vencedor/empate (saldo diferente) → `pts_outcome`
+2. **Jogo com vencedor:** mesmo vencedor **e** mesmo saldo de gols → `pts_goaldiff`
+3. Mesmo vencedor, ou **empate certo sem o placar exato** → `pts_outcome`
 4. Errou o resultado → 0
+
+> ⚠️ O bônus de saldo (faixa 2) **só vale em jogos com vencedor**. Como todo empate
+> tem saldo 0, um empate não-exato cairia sempre na faixa de saldo — então ele conta
+> apenas como acerto de resultado (`pts_outcome`). Empate exato continua valendo `pts_exact`.
 
 "Quem avança" pontua quando **todos os 6 jogos do grupo terminam**: `pts_advance` por
 seleção prevista que ficou no top 2 (desempate por pontos → saldo → gols pró).

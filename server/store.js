@@ -225,7 +225,9 @@ function scoreMatch(pool, pred, m) {
   const rh = m.home_score, ra = m.away_score;
   if (ph === rh && pa === ra) return pool.pts_exact;
   if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return 0;
-  if (ph - pa === rh - ra) return pool.pts_goaldiff;
+  // O bônus de saldo só vale em jogos com VENCEDOR. Todo empate tem saldo 0, então
+  // um empate não-exato vale só o acerto do resultado (senão qualquer empate pegaria o bônus).
+  if (rh !== ra && ph - pa === rh - ra) return pool.pts_goaldiff;
   return pool.pts_outcome;
 }
 
