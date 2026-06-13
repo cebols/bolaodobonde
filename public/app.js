@@ -903,41 +903,57 @@ function podiumHtml(board, meName) {
   return `<div class="card podium-card"><h3>🏆 Pódio</h3><div class="podium">${cols}</div></div>`;
 }
 
-// "Corrida pelo título": evolução da posição de cada um ao longo das rodadas (SVG).
+// Cor (matiz) estável por nome, pra cada cavalo ter sua cor.
+function horseHue(name) {
+  let h = 0; const s = String(name || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return h;
+}
+// Cavalo cartunizado (SVG inline) com a foto do participante como jóquei.
+function horseSvg(r) {
+  const h = horseHue(r.name);
+  return `<div class="horse" style="--c:hsl(${h} 55% 50%);--cd:hsl(${h} 48% 34%)">
+    <svg class="horse-svg" viewBox="0 0 96 64" aria-hidden="true">
+      <path class="tail" d="M16 26 Q3 30 6 48 Q11 38 17 40 Q12 31 22 31 Z" fill="var(--cd)"/>
+      <rect class="leg leg-b" x="24" y="38" width="6" height="20" rx="3" fill="var(--cd)"/>
+      <rect class="leg leg-a" x="56" y="38" width="6" height="20" rx="3" fill="var(--cd)"/>
+      <ellipse class="body" cx="44" cy="30" rx="26" ry="14" fill="var(--c)"/>
+      <rect class="leg leg-a" x="32" y="38" width="6" height="20" rx="3" fill="var(--c)"/>
+      <rect class="leg leg-b" x="62" y="38" width="6" height="20" rx="3" fill="var(--c)"/>
+      <path class="neck" d="M60 24 Q70 18 75 8 L84 12 Q80 24 70 32 Z" fill="var(--c)"/>
+      <path class="head" d="M74 6 Q89 7 91 19 Q91 25 83 24 L74 19 Q71 10 74 6 Z" fill="var(--c)"/>
+      <path class="ear" d="M76 6 L77 -1 L81 6 Z" fill="var(--cd)"/>
+      <path class="mane" d="M60 24 Q69 14 75 7 L71 6 Q62 15 56 25 Z" fill="var(--cd)"/>
+      <circle cx="84" cy="14" r="1.5" fill="#15110c"/>
+      <ellipse cx="90" cy="21" rx="2.4" ry="2" fill="var(--cd)"/>
+    </svg>
+    <span class="jockey">${avatarImg(r.avatar, r.name, 'av')}</span>
+  </div>`;
+}
+
+// "Corrida pelo título": cada participante num cavalo; quanto mais pontos, mais
+// perto da linha de chegada. Os cavalos galopam e correm até sua posição.
 function raceChartHtml(rounds, board, meName) {
-  if (!rounds || rounds.length < 2) return '';
-  const N = board.length;
-  // participantes mostrados: top 6 + você (se estiver fora)
-  const shown = board.slice(0, 6).map((b) => b.name);
-  if (meName && !shown.includes(meName) && board.some((b) => b.name === meName)) shown.push(meName);
-
-  const W = 100, H = Math.max(46, Math.min(92, N * 9)); // viewBox; escala uniforme
-  const padL = 3, padR = 3, padT = 6, padB = 6;
-  const R = rounds.length;
-  const xAt = (i) => padL + (W - padL - padR) * (R === 1 ? 0.5 : i / (R - 1));
-  const yAt = (rank) => padT + (H - padT - padB) * ((rank - 1) / Math.max(1, N - 1));
-
-  const rankIn = (round, name) => { const b = round.board.find((x) => x.name === name); return b ? b.rank : N; };
-
-  const lines = shown.map((name) => {
-    const pts = rounds.map((rd, i) => `${xAt(i).toFixed(1)},${yAt(rankIn(rd, name)).toFixed(1)}`);
-    const isMe = name === meName;
-    const col = isMe ? 'var(--gold)' : avColor(name);
-    const dots = rounds.map((rd, i) => `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(rankIn(rd, name)).toFixed(1)}" r="${isMe ? 1.4 : 1}" fill="${col}" />`).join('');
-    return `<g class="race-line ${isMe ? 'me' : ''}">
-      <polyline points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="${isMe ? 1.4 : 0.9}" stroke-linejoin="round" stroke-linecap="round" pathLength="1" />
-      ${dots}
-    </g>`;
+  if (!board || board.length < 2) return '';
+  const shown = board.slice(0, 8);
+  const leader = Math.max(1, shown[0].total);
+  const lanes = shown.map((r, i) => {
+    const pos = Math.min(0.92, Math.max(0.05, r.total / leader));
+    const isMe = r.name === meName;
+    return `<div class="lane ${isMe ? 'me' : ''}">
+      <span class="lane-no">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + 'º'}</span>
+      <div class="lane-strip">
+        <div class="runner" style="--pos:${pos.toFixed(3)}; --delay:${(i * 0.12).toFixed(2)}s">
+          ${horseSvg(r)}
+          <span class="runner-tag">${esc(r.name)}${isMe ? ' (você)' : ''} · <b>${r.total}</b></span>
+        </div>
+      </div>
+    </div>`;
   }).join('');
-
-  const legend = shown.map((name) => `<span class="race-leg"><span class="dot" style="background:${name === meName ? 'var(--gold)' : avColor(name)}"></span>${esc(name)}${name === meName ? ' (você)' : ''}</span>`).join('');
-  const dateLabel = (d) => { try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }); } catch (_) { return d; } };
-
-  return `<div class="card race-card"><h3>🏁 Corrida pelo título</h3>
-    <p class="muted">Posição no ranking a cada dia de jogos (mais alto = melhor).</p>
-    <div class="race-wrap"><svg viewBox="0 0 ${W} ${H}" class="race-svg">${lines}</svg></div>
-    <div class="race-axis muted"><span>${esc(dateLabel(rounds[0].date))}</span><span>${esc(dateLabel(rounds[rounds.length - 1].date))}</span></div>
-    <div class="race-legend">${legend}</div>
+  return `<div class="card race-card">
+    <h3>🏇 Corrida pelo título</h3>
+    <p class="muted">Cada um no seu cavalo — quanto mais pontos, mais perto da linha de chegada. 🏁</p>
+    <div class="track"><span class="track-flag">🏁</span>${lanes}</div>
   </div>`;
 }
 
