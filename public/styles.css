@@ -105,13 +105,20 @@ button:disabled { opacity: 0.6; cursor: default; }
 .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.85rem; }
 .btn-soft.active { background: var(--green); color: #fff; border-color: var(--green); }
 
-/* ---------- tabs ---------- */
-.tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+/* ---------- tabs (barra única com scroll lateral) ---------- */
+.tabs {
+  display: flex; flex-wrap: nowrap; gap: 0.4rem; margin-bottom: 1rem;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x proximity;
+}
+.tabs::-webkit-scrollbar { display: none; }
 .tabs button {
-  flex: 1 1 auto; white-space: nowrap; padding: 0.55rem 0.7rem;
+  flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start; padding: 0.55rem 0.95rem;
   background: var(--card); border: 1px solid var(--line); color: var(--muted);
 }
 .tabs button.active { background: var(--green); color: #fff; border-color: var(--green); }
+
+.card-slim { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 0.6rem 0.9rem; margin-bottom: 1rem; }
+.missing-hint.card-slim { border-color: var(--gold); color: var(--gold); font-size: 0.88rem; }
 
 /* ---------- match list ---------- */
 .stage-title { margin: 1.4rem 0 0.6rem; font-size: 1.05rem; color: var(--green-bright); border-bottom: 2px solid var(--gold); padding-bottom: 0.2rem; }
@@ -509,6 +516,16 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .mg-edit { display: flex; align-items: center; gap: 0.3rem; }
 .mg-in { width: 34px; text-align: center; padding: 0.4rem 0.2rem; font-size: 1.05rem; }
 .mg-ro { text-align: right; font-size: 0.8rem; display: flex; align-items: center; gap: 0.4rem; justify-content: flex-end; flex-wrap: wrap; }
+
+/* gaveta maior e centralizada no desktop */
+@media (min-width: 700px) {
+  .sheet-ov { align-items: center; padding: 1.5rem; }
+  .sheet { max-width: 780px; max-height: 86vh; border-radius: 16px; animation: none; }
+  .sheet-head h3 { font-size: 1.2rem; }
+  .mg-row { grid-template-columns: 3.2rem 1fr auto; padding: 0.55rem 0.3rem; }
+  .mg-teams { font-size: 0.95rem; }
+  .mg-in { width: 40px; font-size: 1.15rem; }
+}
 
 /* ---------- barra de status fixa (sua posição) ---------- */
 #status-bar { position: sticky; top: 46px; z-index: 16; margin-bottom: 0.8rem; }

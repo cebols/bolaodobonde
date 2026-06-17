@@ -361,8 +361,8 @@ function drawPoolShell() {
   const tabs = [
     ['palpites', '🎯 Palpites'],
     ['partidas', '📅 Partidas'],
-    ['chave', '🗝️ Chave'],
     ['ranking', '📊 Ranking'],
+    ['chave', '🗝️ Chave'],
   ];
   if (isAdmin) tabs.push(['admin', '⚙️ Admin']);
 
@@ -382,6 +382,7 @@ function drawPoolShell() {
             <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
           </div>
         </details>
+        ${PoolState.me ? `<button id="btn-logout" class="btn-ghost btn-sm">Sair</button>` : ''}
       </div>
     </section>
     <div id="live-banner">${liveBannerHtml()}</div>
@@ -397,6 +398,13 @@ function drawPoolShell() {
   });
   refreshRemindBtn();
   const fab = $('#my-games-fab'); if (fab) fab.onclick = openMyGames;
+  const lo = $('#btn-logout');
+  if (lo) lo.onclick = () => {
+    store.clearPart(PoolState.slug);
+    if (store.getHome() === PoolState.slug) store.clearHome();
+    PoolState.me = null; PoolState.standings = null;
+    drawPoolShell();
+  };
   if (!window._hdrScroll) {
     window._hdrScroll = true;
     window.addEventListener('scroll', () => {
@@ -714,20 +722,11 @@ async function renderPalpites() {
     return !d || d.home == null || d.home === '' || d.away == null || d.away === '';
   }).length;
 
-  let html = `
-    <div class="card">
-      <div class="row" style="align-items:center">
-        <div><b>👤 ${esc(mine.name)}</b> · <span class="pill pts">${mine.total} pts</span></div>
-        <div style="text-align:right;flex:0"><button id="btn-logout" class="btn-soft btn-sm">Sair</button></div>
-      </div>
-      ${mine.lastSaved ? `<p class="muted save-stamp">💾 Último salvamento: ${esc(fmtDate(new Date(mine.lastSaved).toISOString()))}</p>` : ''}
-      ${missing > 0 && !lock.locked ? `<p class="missing-hint">⚠️ Você tem <b>${missing}</b> jogo(s) abertos ainda sem palpite.</p>` : ''}
-    </div>`;
-
-  if (lock.locked) {
-    html += `<div class="lock-banner">🔒 <b>Palpites travados.</b> O organizador fechou as apostas — não dá mais para editar os placares.</div>`;
-  } else if (lock.lockAt) {
-    html += `<div class="lock-banner open">⏳ Palpites abertos. Fecham automaticamente em <b>${esc(fmtDate(new Date(lock.lockAt).toISOString()))}</b> (5 min antes do 1º jogo), salvo se o organizador mudar.</div>`;
+  let html = '';
+  if (missing > 0 && !lock.locked) {
+    html += `<div class="missing-hint card-slim">⚠️ Você tem <b>${missing}</b> jogo(s) abertos ainda sem palpite.</div>`;
+  } else if (!lock.locked && lock.lockAt) {
+    html += `<div class="lock-banner open">⏳ Palpites abertos. Fecham automaticamente em <b>${esc(fmtDate(new Date(lock.lockAt).toISOString()))}</b> (5 min antes do 1º jogo).</div>`;
   }
 
   // ---- Nav lateral dos grupos (scroll horizontal) ----
@@ -798,12 +797,6 @@ async function renderPalpites() {
   }
 
   view.innerHTML = html;
-
-  $('#btn-logout').onclick = () => {
-    store.clearPart(PoolState.slug);
-    if (store.getHome() === PoolState.slug) store.clearHome();
-    PoolState.me = null; drawPoolShell();
-  };
 
   // nav dos grupos -> rola até o card
   view.querySelectorAll('.gchip').forEach((b) => {
