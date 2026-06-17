@@ -1721,6 +1721,20 @@ function togglePartida(card) {
   if (!panel.dataset.loaded) loadMatchPanel(card);
 }
 
+// Autores dos gols (vindos da ESPN), em duas colunas por seleção.
+function goalsHtml(d) {
+  const goals = d.goals || [];
+  if (!goals.length) return '';
+  const m = d.match;
+  const fmt = (g) => `<div class="goal-item">⚽ <b>${g.minute ? esc(g.minute) : ''}</b> ${esc(g.who || 'gol')}${g.pen ? ' <small>(P)</small>' : ''}${g.og ? ' <small>(GC)</small>' : ''}</div>`;
+  const home = goals.filter((g) => g.side === 'home');
+  const away = goals.filter((g) => g.side === 'away');
+  return `<div class="goals-box">
+    <div class="goals-side"><div class="goals-team">${flag(m.home_team)} ${esc(m.home_team || '')}</div>${home.map(fmt).join('') || '<div class="goal-item muted">—</div>'}</div>
+    <div class="goals-side"><div class="goals-team">${flag(m.away_team)} ${esc(m.away_team || '')}</div>${away.map(fmt).join('') || '<div class="goal-item muted">—</div>'}</div>
+  </div>`;
+}
+
 // Carrega (ou recarrega) o painel de palpites de um card de jogo. Usado pelo
 // toggle e pela atualização ao vivo (recarrega o painel aberto p/ pontos atualizados).
 async function loadMatchPanel(card) {
@@ -1739,7 +1753,7 @@ async function loadMatchPanel(card) {
     }
     const meName = PoolState.me?.name;
     const hasResult = d.match.home_score != null;
-    panel.innerHTML = `<div class="ppanel">
+    panel.innerHTML = `${goalsHtml(d)}<div class="ppanel">
       <div class="ppanel-head"><span>${d.predictions.length}/${d.participants} palpitaram</span>${hasResult ? `<span>pontos${d.match.finished ? '' : ' (parcial)'}</span>` : ''}</div>
       ${d.predictions.map((p, i) => `<div class="prow ${p.name === meName ? 'me' : ''}">
         <span class="prk">${hasResult && i === 0 && p.points > 0 ? '🥇' : (i + 1)}</span>

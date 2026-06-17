@@ -6,7 +6,7 @@ import {
   createPool, genToken, hashPin,
   recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant, resolveKnockout,
 } from './store.js';
-import { syncPool, maybeSync, SYNC_ENABLED, diagnose } from './sync.js';
+import { syncPool, maybeSync, SYNC_ENABLED, diagnose, matchGoals } from './sync.js';
 import { GROUPS, FLAGS, CODES, STAGE_NAMES, FIFA_RANK } from '../data/wc2026.js';
 
 // Ordem das fases e regra de liberação: uma fase só abre para palpites quando a
@@ -386,7 +386,10 @@ app.get('/api/pools/:slug/matches/:id/predictions', wrap(async (req, res) => {
   const predictions = rows
     .map((r) => ({ name: r.name, avatar: r.avatar || null, home_score: r.home_score, away_score: r.away_score, points: r.points }))
     .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
-  res.json({ match: matchPublic(m), revealed: true, predictions, participants: Number(total.c) });
+  // autores dos gols (ESPN) — só faz sentido quando o jogo começou
+  let goals = [];
+  if (m.home_score != null || m.finished) { try { goals = await matchGoals(m); } catch (_) { goals = []; } }
+  res.json({ match: matchPublic(m), revealed: true, predictions, participants: Number(total.c), goals });
 }));
 
 // ---------- admin ----------

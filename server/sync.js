@@ -77,16 +77,9 @@ function espnToPt(name) {
 
 // ---- cache do placar ao vivo da ESPN ----
 let espnCache = { at: 0, data: null };
-async function fetchEspn({ force = false } = {}) {
-  if (!force && Date.now() - espnCache.at < ESPN_TTL && espnCache.data) return espnCache.data;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
-  let res;
-  try {
-    res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/scoreboard`, { signal: ctrl.signal });
-  } finally { clearTimeout(timer); }
-  if (!res.ok) throw new Error(`espn ${res.status}`);
-  const json = await res.json();
+
+// Converte a resposta da ESPN num formato simples (incl. autores dos gols).
+function parseEspn(json) {
   const events = Array.isArray(json.events) ? json.events : [];
   const out = [];
   for (const ev of events) {
@@ -102,10 +95,61 @@ async function fetchEspn({ force = false } = {}) {
     const state = ev.status?.type?.state || comp.status?.type?.state || 'pre'; // pre | in | post
     const hs = home.score != null && home.score !== '' ? parseInt(home.score, 10) : null;
     const as = away.score != null && away.score !== '' ? parseInt(away.score, 10) : null;
-    out.push({ home: hp, away: ap, hs, as, state, completed: !!(ev.status?.type?.completed) });
+    // gols (scoring plays): jogador, minuto, pênalti, gol contra, lado
+    const goals = [];
+    for (const d of (comp.details || [])) {
+      if (!d.scoringPlay) continue;
+      const who = (d.athletesInvolved && d.athletesInvolved[0] && (d.athletesInvolved[0].displayName || d.athletesInvolved[0].shortName)) || null;
+      const side = d.team && String(d.team.id) === String(home.team?.id) ? 'home' : 'away';
+      goals.push({ side, who, minute: (d.clock && d.clock.displayValue) || '', pen: !!d.penaltyKick, og: !!d.ownGoal });
+    }
+    out.push({ home: hp, away: ap, hs, as, state, completed: !!(ev.status?.type?.completed), goals });
   }
+  return out;
+}
+
+async function fetchEspnRaw(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+  let res;
+  try { res = await fetch(url, { signal: ctrl.signal }); }
+  finally { clearTimeout(timer); }
+  if (!res.ok) throw new Error(`espn ${res.status}`);
+  return parseEspn(await res.json());
+}
+
+async function fetchEspn({ force = false } = {}) {
+  if (!force && Date.now() - espnCache.at < ESPN_TTL && espnCache.data) return espnCache.data;
+  const out = await fetchEspnRaw(`https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/scoreboard`);
   espnCache = { at: Date.now(), data: out };
   return out;
+}
+
+// Scoreboard de uma data específica (YYYYMMDD) — usado p/ buscar gols de qualquer jogo.
+const espnDateCache = new Map();
+async function fetchEspnForDate(ymd) {
+  const c = espnDateCache.get(ymd);
+  if (c && Date.now() - c.at < ESPN_TTL) return c.data;
+  const out = await fetchEspnRaw(`https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/scoreboard?dates=${ymd}`);
+  espnDateCache.set(ymd, { at: Date.now(), data: out });
+  return out;
+}
+
+// Autores dos gols de um jogo do bolão (orientados pelos times do jogo). Best-effort.
+export async function matchGoals(m) {
+  if (!m || !m.home_team || !m.away_team) return [];
+  try {
+    const d = new Date(m.kickoff);
+    if (Number.isNaN(d.getTime())) return [];
+    const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+    const list = await fetchEspnForDate(ymd);
+    for (const e of list) {
+      if (!e.goals || !e.goals.length) continue;
+      if (e.home === m.home_team && e.away === m.away_team) return e.goals;
+      if (e.home === m.away_team && e.away === m.home_team) return e.goals.map((g) => ({ ...g, side: g.side === 'home' ? 'away' : 'home' }));
+    }
+  } catch (_) { /* best-effort */ }
+  return [];
 }
 
 // Placar de um jogo do bolão a partir da ESPN (orienta home/away pelos times do jogo).
@@ -249,8 +293,8 @@ export async function diagnose() {
     const ev = await fetchEspn({ force: true });
     out.espn.ok = true;
     out.espn.events = ev.length;
-    out.espn.live = ev.filter((e) => e.state === 'in').map((e) => ({ home: e.home, away: e.away, score: `${e.hs ?? '-'}x${e.as ?? '-'}` }));
-    out.espn.sample = ev.slice(0, 6).map((e) => ({ home: e.home, away: e.away, score: `${e.hs ?? '-'}x${e.as ?? '-'}`, state: e.state }));
+    out.espn.live = ev.filter((e) => e.state === 'in').map((e) => ({ home: e.home, away: e.away, score: `${e.hs ?? '-'}x${e.as ?? '-'}`, goals: (e.goals || []).map((g) => `${g.minute} ${g.who}${g.pen ? ' (P)' : ''}${g.og ? ' (GC)' : ''}`) }));
+    out.espn.sample = ev.slice(0, 6).map((e) => ({ home: e.home, away: e.away, score: `${e.hs ?? '-'}x${e.as ?? '-'}`, state: e.state, goals: (e.goals || []).length }));
   } catch (e) { out.espn.ok = false; out.espn.error = String(e.message || e); }
   return out;
 }
