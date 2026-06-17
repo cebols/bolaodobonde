@@ -479,6 +479,37 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 #live-banner:not(:empty) { margin-bottom: 1rem; }
 #live-banner .live-now-card { margin-bottom: 0; }
 
+/* ---------- FAB "Meus jogos" + gaveta ---------- */
+#my-games-fab {
+  position: fixed; right: 0.9rem; bottom: 0.9rem; z-index: 40;
+  background: var(--green); color: #fff; border: 1px solid var(--green-bright);
+  border-radius: 999px; padding: 0.7rem 1rem; font-weight: 700; font-size: 0.92rem;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 0.4rem;
+}
+#my-games-fab:hover { filter: brightness(1.1); }
+@media (max-width: 480px) { #my-games-fab span { display: none; } #my-games-fab { padding: 0.8rem; font-size: 1.2rem; } }
+
+.sheet-ov { align-items: flex-end; justify-content: center; padding: 0; }
+.sheet {
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px 16px 0 0;
+  width: 100%; max-width: 640px; max-height: 88vh; display: flex; flex-direction: column;
+  box-shadow: 0 -8px 30px rgba(0,0,0,0.5); animation: sheet-up 0.22s ease;
+}
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.9rem 1rem; border-bottom: 1px solid var(--line); }
+.sheet-head h3 { margin: 0; font-size: 1.05rem; }
+.sheet-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0.6rem 1rem 1rem; }
+.sheet-foot { padding: 0.7rem 1rem; border-top: 1px solid var(--line); background: var(--card); }
+
+.mg-day { font-size: 0.78rem; font-weight: 800; color: var(--green-bright); text-transform: capitalize; margin: 0.8rem 0 0.4rem; position: sticky; top: 0; background: var(--card); padding: 0.2rem 0; }
+.mg-row { display: grid; grid-template-columns: 2.6rem 1fr auto; align-items: center; gap: 0.5rem; padding: 0.45rem 0.2rem; border-top: 1px solid var(--line); }
+.mg-row.mg-miss { background: var(--goldbg); border-radius: 8px; }
+.mg-time { font-size: 0.78rem; color: var(--muted); font-weight: 700; text-align: center; }
+.mg-teams { font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; min-width: 0; }
+.mg-edit { display: flex; align-items: center; gap: 0.3rem; }
+.mg-in { width: 34px; text-align: center; padding: 0.4rem 0.2rem; font-size: 1.05rem; }
+.mg-ro { text-align: right; font-size: 0.8rem; display: flex; align-items: center; gap: 0.4rem; justify-content: flex-end; flex-wrap: wrap; }
+
 /* ---------- barra de status fixa (sua posição) ---------- */
 #status-bar { position: sticky; top: 46px; z-index: 16; margin-bottom: 0.8rem; }
 #status-bar:empty { display: none; margin: 0; }

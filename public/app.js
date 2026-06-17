@@ -389,12 +389,14 @@ function drawPoolShell() {
       ${tabs.map(([k, label]) => `<button data-tab="${k}" class="${PoolState.tab === k ? 'active' : ''}">${label}</button>`).join('')}
     </div>
     <div id="tabview"></div>
+    ${PoolState.me ? `<button id="my-games-fab" title="Seus palpites dos próximos jogos">🎯 <span>Meus jogos</span></button>` : ''}
   `;
   wireLiveCards($('#live-banner'));
   $('#tabs').querySelectorAll('button').forEach((b) => {
     b.onclick = () => { PoolState.tab = b.dataset.tab; window.scrollTo(0, 0); drawPoolShell(); };
   });
   refreshRemindBtn();
+  const fab = $('#my-games-fab'); if (fab) fab.onclick = openMyGames;
   if (!window._hdrScroll) {
     window._hdrScroll = true;
     window.addEventListener('scroll', () => {
@@ -544,6 +546,118 @@ async function refreshStatusBar() {
     const go = $('#sb-go');
     if (go) go.onclick = () => { if (PoolState.tab !== 'ranking') { PoolState.tab = 'ranking'; window.scrollTo(0, 0); drawPoolShell(); } };
   } catch (_) { /* silencioso */ }
+}
+
+// ---------- gaveta "Meus jogos" (palpites próprios dos próximos jogos) ----------
+function mgEditable(m, locks, globalLocked) {
+  return m.home_team && m.away_team && !m.finished && new Date(m.kickoff).getTime() > Date.now() && !locks[m.stage] && !globalLocked;
+}
+function buildMyGamesBody(mine) {
+  const preds = new Map(mine.predictions.map((p) => [p.match_id, p]));
+  const matches = PoolState.data.matches || [];
+  const locks = PoolState.data.stageLocks || {};
+  const globalLocked = !!(PoolState.data.lock && PoolState.data.lock.locked);
+  const todayStr = localDay(new Date());
+  const tmr = new Date(); tmr.setDate(tmr.getDate() + 1); const tmrStr = localDay(tmr);
+  const up = matches
+    .filter((m) => m.home_team && m.away_team && localDay(m.kickoff) >= todayStr)
+    .sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
+  if (!up.length) return { html: `<p class="muted center" style="padding:1.5rem">Nenhum jogo definido daqui pra frente. 🎉</p>`, hasEditable: false };
+
+  let html = '', lastDay = '', hasEditable = false;
+  for (const m of up) {
+    const ds = localDay(m.kickoff);
+    if (ds !== lastDay) {
+      lastDay = ds;
+      const lbl = ds === todayStr ? '🔴 Hoje' : ds === tmrStr ? 'Amanhã' : cap(new Date(ds + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'short' }));
+      html += `<div class="mg-day">${esc(lbl)}</div>`;
+    }
+    const p = preds.get(m.id);
+    const t = new Date(m.kickoff).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const ed = mgEditable(m, locks, globalLocked);
+    let center;
+    if (ed) {
+      hasEditable = true;
+      center = `<div class="mg-edit">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" enterkeyhint="next" class="mg-in" data-mg="${m.id}" data-side="home" value="${p ? p.home_score : ''}" />
+        <span class="vs">x</span>
+        <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" enterkeyhint="next" class="mg-in" data-mg="${m.id}" data-side="away" value="${p ? p.away_score : ''}" />
+      </div>`;
+    } else {
+      const yours = p ? `${p.home_score} x ${p.away_score}` : '—';
+      const real = m.finished ? `<span class="pill done">${m.home_score}x${m.away_score}</span>`
+        : (m.home_score != null ? `<span class="pill live"><span class="live-dot"></span>${m.home_score}x${m.away_score}</span>` : `<span class="pill tbd">fechado</span>`);
+      center = `<div class="mg-ro"><span class="muted">seu: <b>${esc(yours)}</b></span> ${real}</div>`;
+    }
+    html += `<div class="mg-row ${ed && !p ? 'mg-miss' : ''}">
+      <div class="mg-time">${esc(t)}</div>
+      <div class="mg-teams">${flag(m.home_team)} <span>${esc(m.home_team)}</span> <span class="cmp-x">×</span> <span>${esc(m.away_team)}</span> ${flag(m.away_team)}</div>
+      ${center}
+    </div>`;
+  }
+  return { html, hasEditable };
+}
+
+async function openMyGames() {
+  if (!PoolState.me) { toast('Entre no bolão para ver seus palpites.', true); return; }
+  const ov = document.createElement('div');
+  ov.className = 'modal-ov sheet-ov';
+  ov.innerHTML = `<div class="sheet">
+    <div class="sheet-head"><h3>🎯 Meus jogos — próximos</h3><button class="btn-soft btn-sm" data-close>Fechar</button></div>
+    <div class="sheet-body"><p class="muted center" style="padding:1.5rem">Carregando…</p></div>
+    <div class="sheet-foot" hidden><button id="mg-save" class="btn-gold btn-block">💾 Salvar palpites</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  ov.querySelector('[data-close]').onclick = close;
+
+  const body = ov.querySelector('.sheet-body');
+  const foot = ov.querySelector('.sheet-foot');
+  const draft = {};
+
+  const wireInputs = () => {
+    const inputs = [...body.querySelectorAll('input[data-mg]')];
+    inputs.forEach((inp, idx) => {
+      inp.oninput = () => {
+        const v = inp.value.replace(/[^0-9]/g, '').slice(0, 1);
+        inp.value = v;
+        draft[inp.dataset.mg] = draft[inp.dataset.mg] || {};
+        draft[inp.dataset.mg][inp.dataset.side] = v === '' ? '' : Number(v);
+        if (v !== '' && inputs[idx + 1]) { inputs[idx + 1].focus(); inputs[idx + 1].select(); }
+      };
+      inp.onfocus = () => inp.select();
+    });
+  };
+
+  let mine;
+  try {
+    mine = await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token });
+  } catch (e) { body.innerHTML = `<p class="center" style="padding:1.5rem">${esc(e.message)}</p>`; return; }
+
+  const render = (data) => {
+    const r = buildMyGamesBody(data);
+    body.innerHTML = r.html;
+    foot.hidden = !r.hasEditable;
+    wireInputs();
+  };
+  render(mine);
+
+  ov.querySelector('#mg-save').onclick = async () => {
+    const predictions = Object.entries(draft)
+      .filter(([, v]) => v.home !== '' && v.home != null && v.away !== '' && v.away != null)
+      .map(([matchId, v]) => ({ matchId: Number(matchId), home: v.home, away: v.away }));
+    if (!predictions.length) { toast('Preencha algum placar pra salvar.'); return; }
+    try {
+      const res = await api('PUT', `/api/pools/${PoolState.slug}/predictions`, { predictions }, { 'x-participant-token': PoolState.me.token });
+      toast(`✅ ${res.saved} palpite(s) salvo(s).${res.skipped ? ` ${res.skipped} já fechado(s).` : ''}`);
+      for (const k of Object.keys(draft)) delete draft[k];
+      const fresh = await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token });
+      render(fresh);
+      if (PoolState.tab === 'palpites') renderPalpites();
+      refreshStatusBar();
+    } catch (e) { toast(e.message, true); }
+  };
 }
 
 // Atualiza o bloco "ao vivo" sem re-renderizar a aba inteira. Se o conjunto de
