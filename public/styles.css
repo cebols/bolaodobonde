@@ -105,14 +105,10 @@ button:disabled { opacity: 0.6; cursor: default; }
 .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.85rem; }
 .btn-soft.active { background: var(--green); color: #fff; border-color: var(--green); }
 
-/* ---------- tabs (barra única com scroll lateral) ---------- */
-.tabs {
-  display: flex; flex-wrap: nowrap; gap: 0.4rem; margin-bottom: 1rem;
-  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x proximity;
-}
-.tabs::-webkit-scrollbar { display: none; }
+/* ---------- tabs (quebra em linhas, todas à vista) ---------- */
+.tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
 .tabs button {
-  flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start; padding: 0.55rem 0.95rem;
+  flex: 1 1 auto; white-space: nowrap; padding: 0.55rem 0.8rem;
   background: var(--card); border: 1px solid var(--line); color: var(--muted);
 }
 .tabs button.active { background: var(--green); color: #fff; border-color: var(--green); }
