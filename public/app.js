@@ -364,6 +364,7 @@ function drawPoolShell() {
     ['ranking', '📊 Ranking'],
     ['chave', '🗝️ Chave'],
   ];
+  if (PoolState.me) tabs.push(['chat', '💬 Chat']);
   if (isAdmin) tabs.push(['admin', '⚙️ Admin']);
 
   const prize = (data.participants.length * 50).toLocaleString('pt-BR');
@@ -380,6 +381,7 @@ function drawPoolShell() {
             <span title="Só em jogos com vencedor — empate não conta saldo">↔️ Vencedor + saldo: <b>${data.pool.scoring.pts_goaldiff}</b></span>
             <span>✅ Vencedor/empate: <b>${data.pool.scoring.pts_outcome}</b></span>
             <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
+            <span title="Pontos do mata-mata × multiplicador da fase">🔥 Mata-mata vale mais: 16-avos ×${data.pool.scoring.mult_r32} · oitavas ×${data.pool.scoring.mult_r16} · quartas ×${data.pool.scoring.mult_qf} · semi ×${data.pool.scoring.mult_sf} · final ×${data.pool.scoring.mult_final}</span>
           </div>
         </details>
         ${PoolState.me ? `<button id="btn-logout" class="btn-ghost btn-sm">Sair</button>` : ''}
@@ -413,10 +415,12 @@ function drawPoolShell() {
   }
   const rb = $('#btn-remind'); if (rb) rb.onclick = toggleReminders;
 
+  stopChatPolling(); // só a aba de chat religa o polling
   if (PoolState.tab === 'palpites') renderPalpites();
   else if (PoolState.tab === 'partidas') renderPartidas();
   else if (PoolState.tab === 'chave') renderBracket();
   else if (PoolState.tab === 'ranking') renderRanking();
+  else if (PoolState.tab === 'chat') renderChat();
   else if (PoolState.tab === 'admin') renderAdmin();
   refreshStatusBar();
 }
@@ -1426,15 +1430,25 @@ async function openCompare(name) {
   }
 }
 
+// Multiplicador da fase no cliente (espelha o servidor; grupos = 1).
+function phaseMultJS(stage) {
+  const sc = PoolState.data?.pool?.scoring || {};
+  if (!['r32', 'r16', 'qf', 'sf', 'third', 'final'].includes(stage)) return 1;
+  const v = Number(sc['mult_' + stage]);
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
 // ---------- desempenho (palpites vs resultado) — usado inline no ranking ----------
 function pickReason(pred, m, scoring) {
   if (!pred) return { label: 'sem palpite', cls: 'miss', icon: '➖' };
   const ph = pred.home_score, pa = pred.away_score, rh = m.home_score, ra = m.away_score;
-  if (ph === rh && pa === ra) return { label: `placar exato +${scoring.pts_exact}`, cls: 'exact', icon: '🎯' };
+  const x = phaseMultJS(m.stage);
+  const v = (base) => Math.round(base * x);
+  const xtag = x !== 1 ? ` (×${x})` : '';
+  if (ph === rh && pa === ra) return { label: `placar exato +${v(scoring.pts_exact)}${xtag}`, cls: 'exact', icon: '🎯' };
   if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return { label: 'errou', cls: 'wrong', icon: '❌' };
-  if (rh === ra) return { label: `acertou o empate +${scoring.pts_outcome}`, cls: 'out', icon: '🤝' };
-  if (ph - pa === rh - ra) return { label: `vencedor + saldo +${scoring.pts_goaldiff}`, cls: 'gd', icon: '↔️' };
-  return { label: `vencedor +${scoring.pts_outcome}`, cls: 'out', icon: '✅' };
+  if (rh === ra) return { label: `acertou o empate +${v(scoring.pts_outcome)}${xtag}`, cls: 'out', icon: '🤝' };
+  if (ph - pa === rh - ra) return { label: `vencedor + saldo +${v(scoring.pts_goaldiff)}${xtag}`, cls: 'gd', icon: '↔️' };
+  return { label: `vencedor +${v(scoring.pts_outcome)}${xtag}`, cls: 'out', icon: '✅' };
 }
 
 
@@ -1767,6 +1781,67 @@ async function loadMatchPanel(card) {
   }
 }
 
+// ---------- aba: chat (2 canais por faixa do ranking) ----------
+let CHAT_TIMER = null;
+function stopChatPolling() { if (CHAT_TIMER) { clearInterval(CHAT_TIMER); CHAT_TIMER = null; } }
+
+function chatMsgHtml(m) {
+  const t = m.created_at ? new Date(m.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+  return `<div class="chat-msg ${m.mine ? 'mine' : ''}">
+    <div class="cm-meta"><b>${esc(m.name)}</b> <span class="muted">${esc(t)}</span></div>
+    <div class="cm-body">${esc(m.body)}</div>
+  </div>`;
+}
+
+async function renderChat() {
+  const view = $('#tabview');
+  if (!PoolState.me) {
+    view.innerHTML = `<div class="card center"><h3>💬 Chat</h3><p class="muted">Entre no bolão para usar o chat.</p></div>`;
+    return;
+  }
+  view.innerHTML = `<div class="card center"><p>Carregando chat…</p></div>`;
+  let data;
+  try { data = await api('GET', `/api/pools/${PoolState.slug}/chat`, null, { 'x-participant-token': PoolState.me.token }); }
+  catch (e) { view.innerHTML = `<div class="card center">${esc(e.message)}</div>`; return; }
+  PoolState.chat = { channel: data.channel, lastId: data.messages.length ? data.messages[data.messages.length - 1].id : 0 };
+
+  view.innerHTML = `<div class="card chat-card">
+    <div class="chat-head"><h3>${esc(data.label)}</h3><span class="muted">você: ${data.rank}º / ${data.total}</span></div>
+    <p class="muted chat-note">Só pra quem está ${data.channel === 'top3' ? '<b>no Top 3</b> 🏆' : '<b>fora do Top 3</b>'}. Mudou de faixa no ranking? Seu chat muda junto. 😈</p>
+    <div class="chat-msgs" id="chat-msgs">${data.messages.length ? data.messages.map(chatMsgHtml).join('') : '<p class="muted center chat-empty" style="padding:1.5rem">Sem mensagens ainda. Quebra o gelo! 🧊</p>'}</div>
+    <div class="chat-input"><input id="chat-text" type="text" maxlength="500" autocomplete="off" placeholder="Mensagem…" /><button id="chat-send" class="btn-primary">Enviar</button></div>
+  </div>`;
+  const msgs = $('#chat-msgs'); msgs.scrollTop = msgs.scrollHeight;
+  const text = $('#chat-text'), send = $('#chat-send');
+  const doSend = async () => {
+    const body = text.value.trim(); if (!body) return;
+    send.disabled = true;
+    try { await api('POST', `/api/pools/${PoolState.slug}/chat`, { body }, { 'x-participant-token': PoolState.me.token }); text.value = ''; await pollChat(); }
+    catch (e) { toast(e.message, true); }
+    finally { send.disabled = false; text.focus(); }
+  };
+  send.onclick = doSend;
+  text.onkeydown = (e) => { if (e.key === 'Enter') doSend(); };
+  stopChatPolling();
+  CHAT_TIMER = setInterval(pollChat, 5000);
+}
+
+async function pollChat() {
+  if (PoolState.tab !== 'chat' || !PoolState.me) return;
+  const msgs = $('#chat-msgs'); if (!msgs) return;
+  try {
+    const data = await api('GET', `/api/pools/${PoolState.slug}/chat?after=${PoolState.chat.lastId}`, null, { 'x-participant-token': PoolState.me.token });
+    if (data.channel !== PoolState.chat.channel) { renderChat(); return; } // mudou de faixa → troca de canal
+    if (data.messages.length) {
+      const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 50;
+      const empty = msgs.querySelector('.chat-empty'); if (empty) msgs.innerHTML = '';
+      msgs.insertAdjacentHTML('beforeend', data.messages.map(chatMsgHtml).join(''));
+      PoolState.chat.lastId = data.messages[data.messages.length - 1].id;
+      if (atBottom) msgs.scrollTop = msgs.scrollHeight;
+    }
+  } catch (_) { /* silencioso */ }
+}
+
 // ---------- aba: admin ----------
 async function renderAdmin() {
   const view = $('#tabview');
@@ -1844,6 +1919,20 @@ async function renderAdmin() {
         <div class="field"><label>🏆 Quem avança (por time)</label><input type="number" id="s-adv" value="${s.pts_advance}" min="0" max="100" /></div>
       </div>
       <p class="muted" style="margin:.2rem 0 .6rem">🤝 <b>Empate:</b> o bônus de saldo só vale em jogos com vencedor. Empate certo no placar = exato; empate certo sem o placar = só o acerto do resultado.</p>
+
+      <h4 style="margin:.6rem 0 .2rem">🔥 Mata-mata: multiplicador por fase</h4>
+      <p class="muted" style="margin:0 0 .5rem">Os pontos de cada jogo do mata-mata são multiplicados por estes valores (1 casa decimal). Ajuda quem ficou pra trás a ter chance de virada — quanto mais tarde a fase, mais vale.</p>
+      <div class="row mult-row">
+        <div class="field"><label>16-avos ×</label><input type="number" id="m-r32" value="${s.mult_r32}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>Oitavas ×</label><input type="number" id="m-r16" value="${s.mult_r16}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>Quartas ×</label><input type="number" id="m-qf" value="${s.mult_qf}" min="0" max="10" step="0.1" /></div>
+      </div>
+      <div class="row mult-row">
+        <div class="field"><label>Semis ×</label><input type="number" id="m-sf" value="${s.mult_sf}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>3º lugar ×</label><input type="number" id="m-third" value="${s.mult_third}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>Final ×</label><input type="number" id="m-final" value="${s.mult_final}" min="0" max="10" step="0.1" /></div>
+      </div>
+
       <label style="font-weight:500"><input type="checkbox" id="s-lock" ${data.pool.lock_at_kickoff ? 'checked' : ''} style="width:auto;margin-right:.4rem" />Travar palpites no horário de início do jogo</label>
       <div class="spacer"></div>
       <button id="save-settings" class="btn-primary">Salvar pontuação</button>
@@ -1892,6 +1981,10 @@ async function renderAdmin() {
         pts_exact: $('#s-exact').value, pts_goaldiff: $('#s-gd').value,
         pts_outcome: $('#s-out').value, pts_advance: $('#s-adv').value,
         lock_at_kickoff: $('#s-lock').checked,
+        mult: {
+          r32: $('#m-r32').value, r16: $('#m-r16').value, qf: $('#m-qf').value,
+          sf: $('#m-sf').value, third: $('#m-third').value, final: $('#m-final').value,
+        },
       }, { 'x-admin-token': adminToken });
       toast('Pontuação salva e ranking recalculado ✅');
       PoolState.data = await api('GET', `/api/pools/${PoolState.slug}`, null, { 'x-admin-token': adminToken });

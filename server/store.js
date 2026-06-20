@@ -8,6 +8,10 @@ import { buildFixtures, GROUPS, FIFA_RANK, KO_SEEDS, BT_SLOTS, seedLabel } from 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USE_PG = !!process.env.DATABASE_URL;
 
+// Fases do mata-mata e multiplicadores padrão de pontuação (admin configura).
+export const KO_STAGES = ['r32', 'r16', 'qf', 'sf', 'third', 'final'];
+export const DEFAULT_MULT = { r32: 1.5, r16: 2.0, qf: 3.0, sf: 4.0, third: 2.0, final: 5.0 };
+
 // ---------- driver ----------
 // A inicialização NUNCA lança no import: se falhar (ex.: SQLite num filesystem
 // read-only como o da Vercel), guardamos o erro e as queries retornam uma
@@ -136,9 +140,19 @@ const SCHEMA_PG = `
     points INTEGER NOT NULL DEFAULT 0,
     UNIQUE(participant_id, group_label)
   );
+  CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    pool_id INTEGER NOT NULL REFERENCES pools(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    participant_id INTEGER REFERENCES participants(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
   CREATE INDEX IF NOT EXISTS idx_matches_pool ON matches(pool_id);
   CREATE INDEX IF NOT EXISTS idx_pred_part ON predictions(participant_id);
   CREATE INDEX IF NOT EXISTS idx_pred_match ON predictions(match_id);
+  CREATE INDEX IF NOT EXISTS idx_msg_chan ON messages(pool_id, channel, id);
 `;
 
 const SCHEMA_SQLITE = SCHEMA_PG
@@ -160,12 +174,14 @@ export function ensureSchema() {
         await pgPool.query("ALTER TABLE pools ADD COLUMN IF NOT EXISTS lock_mode TEXT NOT NULL DEFAULT 'auto'").catch(() => {});
         await pgPool.query('ALTER TABLE predictions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ').catch(() => {});
         await pgPool.query('ALTER TABLE participants ADD COLUMN IF NOT EXISTS avatar TEXT').catch(() => {});
+        for (const s of KO_STAGES) await pgPool.query(`ALTER TABLE pools ADD COLUMN IF NOT EXISTS mult_${s} REAL NOT NULL DEFAULT ${DEFAULT_MULT[s]}`).catch(() => {});
       } else {
         sqlite.exec(SCHEMA_SQLITE);
         try { sqlite.exec('ALTER TABLE pools ADD COLUMN synced_at TEXT'); } catch (_) { /* já existe */ }
         try { sqlite.exec("ALTER TABLE pools ADD COLUMN lock_mode TEXT NOT NULL DEFAULT 'auto'"); } catch (_) { /* já existe */ }
         try { sqlite.exec('ALTER TABLE predictions ADD COLUMN updated_at TEXT'); } catch (_) { /* já existe */ }
         try { sqlite.exec('ALTER TABLE participants ADD COLUMN avatar TEXT'); } catch (_) { /* já existe */ }
+        for (const s of KO_STAGES) { try { sqlite.exec(`ALTER TABLE pools ADD COLUMN mult_${s} REAL NOT NULL DEFAULT ${DEFAULT_MULT[s]}`); } catch (_) { /* já existe */ } }
       }
     })().catch((e) => {
       // Não envenena o cache: permite nova tentativa no próximo acesso.
@@ -229,16 +245,25 @@ export async function createPool(name) {
 }
 
 // ---------- pontuação ----------
+// Multiplicador da fase (mata-mata vale mais; configurável pelo admin). Grupos = 1.
+export function phaseMult(pool, stage) {
+  if (!KO_STAGES.includes(stage)) return 1;
+  const v = Number(pool['mult_' + stage]);
+  return Number.isFinite(v) && v >= 0 ? v : (DEFAULT_MULT[stage] || 1);
+}
 function scoreMatch(pool, pred, m) {
   if (m.home_score == null || m.away_score == null) return 0;
   const ph = pred.home_score, pa = pred.away_score;
   const rh = m.home_score, ra = m.away_score;
-  if (ph === rh && pa === ra) return pool.pts_exact;
-  if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return 0;
+  let base;
+  if (ph === rh && pa === ra) base = pool.pts_exact;
+  else if (Math.sign(ph - pa) !== Math.sign(rh - ra)) base = 0;
   // O bônus de saldo só vale em jogos com VENCEDOR. Todo empate tem saldo 0, então
   // um empate não-exato vale só o acerto do resultado (senão qualquer empate pegaria o bônus).
-  if (rh !== ra && ph - pa === rh - ra) return pool.pts_goaldiff;
-  return pool.pts_outcome;
+  else if (rh !== ra && ph - pa === rh - ra) base = pool.pts_goaldiff;
+  else base = pool.pts_outcome;
+  if (!base) return 0;
+  return Math.round(base * phaseMult(pool, m.stage)); // mata-mata: × multiplicador da fase
 }
 
 export async function recomputeMatch(matchId) {

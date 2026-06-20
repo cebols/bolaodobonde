@@ -5,6 +5,7 @@ import {
   all, get, run, ensureSchema, USE_PG,
   createPool, genToken, hashPin,
   recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant, resolveKnockout,
+  phaseMult, KO_STAGES, DEFAULT_MULT,
 } from './store.js';
 import { syncPool, maybeSync, SYNC_ENABLED, diagnose, matchGoals } from './sync.js';
 import { GROUPS, FLAGS, CODES, STAGE_NAMES, FIFA_RANK } from '../data/wc2026.js';
@@ -84,12 +85,13 @@ async function getParticipant(req, pool) {
   return get('SELECT * FROM participants WHERE token = $1 AND pool_id = $2', [token, pool.id]);
 }
 function publicPool(pool) {
+  const scoring = {
+    pts_exact: pool.pts_exact, pts_goaldiff: pool.pts_goaldiff,
+    pts_outcome: pool.pts_outcome, pts_advance: pool.pts_advance,
+  };
+  for (const s of KO_STAGES) scoring['mult_' + s] = phaseMult(pool, s); // multiplicadores do mata-mata
   return {
-    slug: pool.slug, name: pool.name,
-    scoring: {
-      pts_exact: pool.pts_exact, pts_goaldiff: pool.pts_goaldiff,
-      pts_outcome: pool.pts_outcome, pts_advance: pool.pts_advance,
-    },
+    slug: pool.slug, name: pool.name, scoring,
     lock_at_kickoff: !!pool.lock_at_kickoff,
     lock_mode: pool.lock_mode || 'auto',
   };
@@ -265,15 +267,18 @@ app.post('/api/pools/:slug/predictions/clear', wrap(async (req, res) => {
   res.json({ cleared });
 }));
 
-// pontos de um palpite contra um resultado já lançado
+// pontos de um palpite contra um resultado já lançado (× multiplicador da fase)
 function scoreFor(pool, ph, pa, m) {
   if (m.home_score == null || m.away_score == null) return 0;
   const rh = m.home_score, ra = m.away_score;
-  if (ph === rh && pa === ra) return pool.pts_exact;
-  if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return 0;
+  let base;
+  if (ph === rh && pa === ra) base = pool.pts_exact;
+  else if (Math.sign(ph - pa) !== Math.sign(rh - ra)) base = 0;
   // saldo só conta em jogos com vencedor (empate não-exato = só acerto do resultado).
-  if (rh !== ra && ph - pa === rh - ra) return pool.pts_goaldiff;
-  return pool.pts_outcome;
+  else if (rh !== ra && ph - pa === rh - ra) base = pool.pts_goaldiff;
+  else base = pool.pts_outcome;
+  if (!base) return 0;
+  return Math.round(base * phaseMult(pool, m.stage));
 }
 
 // ---------- leaderboard ----------
@@ -294,6 +299,65 @@ app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
     match_pts: Number(r.match_pts), qual_pts: Number(r.qual_pts), exatos: Number(r.exatos),
   })).sort((a, b) => b.total - a.total || b.exatos - a.exatos || a.name.localeCompare(b.name));
   res.json({ leaderboard: board });
+}));
+
+// ---------- chat (2 canais por faixa do ranking) ----------
+// Classificação com ids, na MESMA ordem do leaderboard, para saber o rank de cada um.
+async function rankedParticipants(poolId) {
+  const rows = await all(`
+    SELECT pa.id, pa.name,
+      COALESCE((SELECT SUM(points) FROM predictions WHERE participant_id = pa.id), 0)
+      + COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id), 0) AS total,
+      (SELECT COUNT(*) FROM predictions pr JOIN matches m ON m.id = pr.match_id
+         WHERE pr.participant_id = pa.id AND m.finished = 1
+           AND pr.home_score = m.home_score AND pr.away_score = m.away_score) AS exatos
+    FROM participants pa WHERE pa.pool_id = $1`, [poolId]);
+  return rows
+    .map((r) => ({ id: r.id, name: r.name, total: Number(r.total), exatos: Number(r.exatos) }))
+    .sort((a, b) => b.total - a.total || b.exatos - a.exatos || a.name.localeCompare(b.name));
+}
+// Canal a que o participante tem acesso AGORA: top3 (rank<=3) ou resto.
+async function channelOf(poolId, participantId) {
+  const ranked = await rankedParticipants(poolId);
+  const idx = ranked.findIndex((r) => r.id === participantId);
+  if (idx < 0) return null;
+  return { channel: idx < 3 ? 'top3' : 'rest', rank: idx + 1, total: ranked.length };
+}
+const CHANNEL_LABEL = { top3: '🏆 Pódio (Top 3)', rest: '😤 Pelotão' };
+
+app.get('/api/pools/:slug/chat', wrap(async (req, res) => {
+  const pool = await getPool(req, res); if (!pool) return;
+  const me = await getParticipant(req, pool);
+  if (!me) return res.status(401).json({ error: 'Entre no bolão para usar o chat.' });
+  const info = await channelOf(pool.id, me.id);
+  if (!info) return res.status(403).json({ error: 'Sem acesso.' });
+  const after = parseInt(req.query.after, 10) || 0;
+  const rows = await all(
+    `SELECT m.id, m.name, m.body, m.created_at, m.participant_id
+       FROM messages m WHERE m.pool_id = $1 AND m.channel = $2 AND m.id > $3
+       ORDER BY m.id DESC LIMIT 80`, [pool.id, info.channel, after]);
+  const messages = rows.reverse().map((r) => ({
+    id: r.id, name: r.name, body: r.body, created_at: r.created_at, mine: r.participant_id === me.id,
+  }));
+  res.json({ channel: info.channel, label: CHANNEL_LABEL[info.channel], rank: info.rank, total: info.total, messages });
+}));
+
+app.post('/api/pools/:slug/chat', wrap(async (req, res) => {
+  const pool = await getPool(req, res); if (!pool) return;
+  const me = await getParticipant(req, pool);
+  if (!me) return res.status(401).json({ error: 'Entre no bolão para usar o chat.' });
+  const info = await channelOf(pool.id, me.id);
+  if (!info) return res.status(403).json({ error: 'Sem acesso.' });
+  const body = String(req.body?.body || '').trim().slice(0, 500);
+  if (!body) return res.status(400).json({ error: 'Mensagem vazia.' });
+  // anti-flood simples: no máx. 1 msg a cada 1,5s por participante
+  const last = await get('SELECT created_at FROM messages WHERE participant_id = $1 ORDER BY id DESC LIMIT 1', [me.id]);
+  if (last && Date.now() - new Date(last.created_at).getTime() < 1500) {
+    return res.status(429).json({ error: 'Calma! Espere um segundo.' });
+  }
+  await run('INSERT INTO messages (pool_id, channel, participant_id, name, body) VALUES ($1, $2, $3, $4, $5)',
+    [pool.id, info.channel, me.id, me.name, body]);
+  res.json({ ok: true, channel: info.channel });
 }));
 
 // ---------- histórico do ranking ----------
@@ -481,6 +545,8 @@ app.put('/api/pools/:slug/settings', wrap(async (req, res) => {
   const pool = await requireAdmin(req, res); if (!pool) return;
   const b = req.body || {};
   const clamp = (v, def) => { const n = parseInt(v, 10); return Number.isNaN(n) ? def : Math.max(0, Math.min(100, n)); };
+  // multiplicador: 1 casa decimal, 0–10
+  const clampMult = (v, def) => { const n = parseFloat(v); return Number.isNaN(n) ? def : Math.max(0, Math.min(10, Math.round(n * 10) / 10)); };
   const f = {
     pts_exact: clamp(b.pts_exact, pool.pts_exact),
     pts_goaldiff: clamp(b.pts_goaldiff, pool.pts_goaldiff),
@@ -490,6 +556,11 @@ app.put('/api/pools/:slug/settings', wrap(async (req, res) => {
   };
   await run(`UPDATE pools SET pts_exact=$1, pts_goaldiff=$2, pts_outcome=$3, pts_advance=$4, lock_at_kickoff=$5 WHERE id=$6`,
     [f.pts_exact, f.pts_goaldiff, f.pts_outcome, f.pts_advance, f.lock_at_kickoff, pool.id]);
+  // multiplicadores do mata-mata
+  for (const s of KO_STAGES) {
+    const val = clampMult((b.mult || {})[s], phaseMult(pool, s));
+    await run(`UPDATE pools SET mult_${s} = $1 WHERE id = $2`, [val, pool.id]);
+  }
 
   const finished = await all('SELECT id FROM matches WHERE pool_id = $1 AND finished = 1', [pool.id]);
   for (const m of finished) await recomputeMatch(m.id);

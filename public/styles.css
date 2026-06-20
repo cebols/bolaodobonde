@@ -535,6 +535,24 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
   .mg-in { width: 40px; font-size: 1.15rem; }
 }
 
+/* ---------- multiplicadores (admin) ---------- */
+.mult-row .field label { font-size: 0.8rem; }
+
+/* ---------- chat ---------- */
+.chat-card { display: flex; flex-direction: column; }
+.chat-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.chat-head h3 { margin: 0; }
+.chat-note { margin: 0.2rem 0 0.6rem; font-size: 0.82rem; }
+.chat-msgs { height: 52vh; min-height: 240px; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.4rem; background: var(--bg2); border-radius: 10px; border: 1px solid var(--line); }
+.chat-msg { max-width: 85%; align-self: flex-start; background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 0.35rem 0.6rem; }
+.chat-msg.mine { align-self: flex-end; background: var(--green-dark); border-color: var(--green); }
+.cm-meta { font-size: 0.72rem; margin-bottom: 0.1rem; }
+.cm-meta b { color: var(--green-bright); }
+.chat-msg.mine .cm-meta b { color: var(--gold); }
+.cm-body { font-size: 0.9rem; word-break: break-word; white-space: pre-wrap; }
+.chat-input { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+.chat-input input { flex: 1; }
+
 /* ---------- barra de status fixa (sua posição) ---------- */
 #status-bar { position: sticky; top: 46px; z-index: 16; margin-bottom: 0.8rem; }
 #status-bar:empty { display: none; margin: 0; }
