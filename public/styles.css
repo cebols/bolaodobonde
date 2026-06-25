@@ -113,6 +113,15 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .tabs button.active { background: var(--green); color: #fff; border-color: var(--green); }
 
+/* ---------- mata-mata: quem avança (empate/pênaltis) ---------- */
+.adv-pick { grid-column: 1 / -1; margin-top: .45rem; padding: .5rem .6rem; background: var(--goldbg); border: 1px dashed var(--gold); border-radius: 10px; }
+.adv-pick.locked { border-style: solid; border-color: var(--line); background: var(--card2); }
+.adv-q { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .4rem; }
+.adv-opts { display: flex; gap: .4rem; }
+.adv-opt { flex: 1 1 0; padding: .5rem .55rem; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; font-size: .9rem; cursor: pointer; }
+.adv-opt.sel { background: var(--green); color: #fff; border-color: var(--green); font-weight: 600; }
+.adv-mini { color: var(--muted); white-space: nowrap; }
+
 .card-slim { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 0.6rem 0.9rem; margin-bottom: 1rem; }
 .missing-hint.card-slim { border-color: var(--gold); color: var(--gold); font-size: 0.88rem; }
 

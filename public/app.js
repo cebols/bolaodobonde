@@ -380,7 +380,8 @@ function drawPoolShell() {
             <span>🎯 Placar exato: <b>${data.pool.scoring.pts_exact}</b></span>
             <span title="Só em jogos com vencedor — empate não conta saldo">↔️ Vencedor + saldo: <b>${data.pool.scoring.pts_goaldiff}</b></span>
             <span>✅ Vencedor/empate: <b>${data.pool.scoring.pts_outcome}</b></span>
-            <span>🏆 Quem avança: <b>${data.pool.scoring.pts_advance}</b>/time</span>
+            <span>🏆 Quem avança (grupos): <b>${data.pool.scoring.pts_advance}</b>/time</span>
+            <span title="No mata-mata, acertar quem passa no confronto (no empate, quem vai nos pênaltis)">🏅 Quem avança (mata-mata): <b>${data.pool.scoring.pts_ko_advance}</b></span>
             <span title="Pontos do mata-mata × multiplicador da fase">🔥 Mata-mata vale mais: 16-avos ×${data.pool.scoring.mult_r32} · oitavas ×${data.pool.scoring.mult_r16} · quartas ×${data.pool.scoring.mult_qf} · semi ×${data.pool.scoring.mult_sf} · final ×${data.pool.scoring.mult_final}</span>
           </div>
         </details>
@@ -587,7 +588,7 @@ function buildMyGamesBody(mine) {
     const p = preds.get(m.id);
     const t = new Date(m.kickoff).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const ed = mgEditable(m, locks, globalLocked);
-    let center;
+    let center, advRow = '';
     if (ed) {
       hasEditable = true;
       center = `<div class="mg-edit">
@@ -595,6 +596,17 @@ function buildMyGamesBody(mine) {
         <span class="vs">x</span>
         <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" enterkeyhint="next" class="mg-in" data-mg="${m.id}" data-side="away" value="${p ? p.away_score : ''}" />
       </div>`;
+      if (m.stage !== 'group') {
+        const drawNow = p && p.home_score != null && p.home_score === p.away_score;
+        const cur = p ? p.adv_pick : null;
+        advRow = `<div class="adv-pick" data-adv-for="${m.id}" ${drawNow ? '' : 'hidden'}>
+          <span class="adv-q">🤝 Empate — quem avança nos pênaltis?</span>
+          <div class="adv-opts">
+            <button type="button" class="adv-opt ${cur === 'home' ? 'sel' : ''}" data-mgadv="${m.id}" data-advside="home">${flag(m.home_team)} ${esc(m.home_team)}</button>
+            <button type="button" class="adv-opt ${cur === 'away' ? 'sel' : ''}" data-mgadv="${m.id}" data-advside="away">${flag(m.away_team)} ${esc(m.away_team)}</button>
+          </div>
+        </div>`;
+      }
     } else {
       const yours = p ? `${p.home_score} x ${p.away_score}` : '—';
       const real = m.finished ? `<span class="pill done">${m.home_score}x${m.away_score}</span>`
@@ -605,6 +617,7 @@ function buildMyGamesBody(mine) {
       <div class="mg-time">${esc(t)}</div>
       <div class="mg-teams">${flag(m.home_team)} <span>${esc(m.home_team)}</span> <span class="cmp-x">×</span> <span>${esc(m.away_team)}</span> ${flag(m.away_team)}</div>
       ${center}
+      ${advRow}
     </div>`;
   }
   return { html, hasEditable };
@@ -628,17 +641,35 @@ async function openMyGames() {
   const foot = ov.querySelector('.sheet-foot');
   const draft = {};
 
+  const toggleMgAdv = (id) => {
+    const box = body.querySelector(`.adv-pick[data-adv-for="${id}"]`);
+    if (!box) return;
+    const d = draft[id] || {};
+    const draw = d.home != null && d.home !== '' && d.away != null && d.away !== '' && Number(d.home) === Number(d.away);
+    box.hidden = !draw;
+  };
   const wireInputs = () => {
     const inputs = [...body.querySelectorAll('input[data-mg]')];
     inputs.forEach((inp, idx) => {
       inp.oninput = () => {
         const v = inp.value.replace(/[^0-9]/g, '').slice(0, 1);
         inp.value = v;
-        draft[inp.dataset.mg] = draft[inp.dataset.mg] || {};
-        draft[inp.dataset.mg][inp.dataset.side] = v === '' ? '' : Number(v);
+        const id = inp.dataset.mg;
+        draft[id] = draft[id] || {};
+        draft[id][inp.dataset.side] = v === '' ? '' : Number(v);
+        toggleMgAdv(id);
         if (v !== '' && inputs[idx + 1]) { inputs[idx + 1].focus(); inputs[idx + 1].select(); }
       };
       inp.onfocus = () => inp.select();
+    });
+    // pré-carrega o draft com o palpite salvo (pra detectar empate já existente) e botões de avanço
+    body.querySelectorAll('[data-mgadv]').forEach((b) => {
+      b.onclick = () => {
+        const id = b.dataset.mgadv;
+        draft[id] = draft[id] || {};
+        draft[id].adv = b.dataset.advside;
+        b.closest('.adv-opts').querySelectorAll('.adv-opt').forEach((x) => x.classList.toggle('sel', x === b));
+      };
     });
   };
 
@@ -646,6 +677,17 @@ async function openMyGames() {
   try {
     mine = await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token });
   } catch (e) { body.innerHTML = `<p class="center" style="padding:1.5rem">${esc(e.message)}</p>`; return; }
+
+  // Semeia o draft com os palpites já salvos dos jogos editáveis, pra mudar só o
+  // "quem avança" (sem redigitar o placar) também ser salvo.
+  const locks0 = PoolState.data.stageLocks || {};
+  const gl0 = !!(PoolState.data.lock && PoolState.data.lock.locked);
+  const predMap0 = new Map(mine.predictions.map((p) => [p.match_id, p]));
+  (PoolState.data.matches || []).forEach((m) => {
+    if (!mgEditable(m, locks0, gl0)) return;
+    const p = predMap0.get(m.id);
+    if (p) draft[m.id] = { home: p.home_score, away: p.away_score, adv: p.adv_pick || null };
+  });
 
   const render = (data) => {
     const r = buildMyGamesBody(data);
@@ -658,7 +700,7 @@ async function openMyGames() {
   ov.querySelector('#mg-save').onclick = async () => {
     const predictions = Object.entries(draft)
       .filter(([, v]) => v.home !== '' && v.home != null && v.away !== '' && v.away != null)
-      .map(([matchId, v]) => ({ matchId: Number(matchId), home: v.home, away: v.away }));
+      .map(([matchId, v]) => ({ matchId: Number(matchId), home: v.home, away: v.away, adv: v.adv || null }));
     if (!predictions.length) { toast('Preencha algum placar pra salvar.'); return; }
     try {
       const res = await api('PUT', `/api/pools/${PoolState.slug}/predictions`, { predictions }, { 'x-participant-token': PoolState.me.token });
@@ -707,7 +749,7 @@ async function renderPalpites() {
   }
 
   PoolState.draft = {};
-  mine.predictions.forEach((p) => { PoolState.draft[p.match_id] = { home: p.home_score, away: p.away_score, points: p.points }; });
+  mine.predictions.forEach((p) => { PoolState.draft[p.match_id] = { home: p.home_score, away: p.away_score, points: p.points, adv: p.adv_pick || null, advpts: p.adv_points || 0 }; });
   PoolState.qsaved = {};
   mine.qualifiers.forEach((q) => { PoolState.qsaved[q.group_label] = q; });
 
@@ -818,9 +860,20 @@ async function renderPalpites() {
       PoolState.draft[id][side] = v === '' ? '' : Number(v);
       const m = matchById.get(Number(id));
       if (m && m.stage === 'group') refreshAll();
+      else if (m && m.stage !== 'group') toggleAdvPick(view, m.id); // mata-mata: revela "quem avança" quando empata
       if (v !== '' && scoreInputs[idx + 1]) { scoreInputs[idx + 1].focus(); scoreInputs[idx + 1].select(); }
     };
     inp.onfocus = () => inp.select();
+  });
+
+  // botões "quem avança" (mata-mata em empate)
+  view.querySelectorAll('.adv-opt').forEach((b) => {
+    b.onclick = () => {
+      const id = b.dataset.adv, side = b.dataset.advside;
+      PoolState.draft[id] = PoolState.draft[id] || {};
+      PoolState.draft[id].adv = side;
+      b.closest('.adv-opts').querySelectorAll('.adv-opt').forEach((x) => x.classList.toggle('sel', x === b));
+    };
   });
 
   const saveBtn = $('#btn-save');
@@ -886,20 +939,50 @@ function matchRow(m) {
       ? `<span class="pill live">🔴 ao vivo: ${m.home_score} x ${m.away_score}</span>`
       : `<span class="pill live">⏱ em jogo/encerrado</span>`;
   }
-  const ptsPill = (d.points != null && (m.finished || m.home_score != null)) ? `<span class="pill ${d.points ? 'pts' : ''}">${d.points} pts</span>` : '';
+  const gamePts = (d.points || 0) + (d.advpts || 0);
+  const ptsPill = (d.points != null && (m.finished || m.home_score != null)) ? `<span class="pill ${gamePts ? 'pts' : ''}">${gamePts} pts</span>` : '';
+
+  // Mata-mata: quem avança. Em palpite de EMPATE o jogador escolhe quem passa nos pênaltis;
+  // se cravou vencedor, o "avança" é automático (o próprio vencedor).
+  let advRow = '';
+  if (m.stage !== 'group' && !tbdH && !tbdA) {
+    const drawNow = d.home != null && d.home !== '' && d.away != null && d.away !== '' && Number(d.home) === Number(d.away);
+    if (!locked) {
+      advRow = `<div class="adv-pick" data-adv-for="${m.id}" ${drawNow ? '' : 'hidden'}>
+        <span class="adv-q">🤝 Empate — quem avança nos pênaltis?</span>
+        <div class="adv-opts">
+          <button type="button" class="adv-opt ${d.adv === 'home' ? 'sel' : ''}" data-adv="${m.id}" data-advside="home">${flag(m.home_team)} ${esc(m.home_team)}</button>
+          <button type="button" class="adv-opt ${d.adv === 'away' ? 'sel' : ''}" data-adv="${m.id}" data-advside="away">${flag(m.away_team)} ${esc(m.away_team)}</button>
+        </div>
+      </div>`;
+    } else if (drawNow && d.adv) {
+      const advTeam = d.adv === 'home' ? m.home_team : m.away_team;
+      advRow = `<div class="adv-pick locked"><span class="adv-q">🤝 Seu palpite: avança ${flag(advTeam)} ${esc(advTeam)}</span></div>`;
+    }
+  }
 
   return `<div class="match ${locked ? 'locked' : ''}">
     <div class="team home">${homeName}</div>
     ${center}
     <div class="team away">${awayName}</div>
     <div class="meta"><span>${esc(m.round_label)}</span><span>${chip} ${ptsPill}</span></div>
+    ${advRow}
   </div>`;
+}
+
+// Mostra/esconde o seletor "quem avança" de um jogo do mata-mata conforme o palpite vira (ou deixa de ser) empate.
+function toggleAdvPick(view, matchId) {
+  const box = view.querySelector(`.adv-pick[data-adv-for="${matchId}"]`);
+  if (!box) return;
+  const d = PoolState.draft[matchId] || {};
+  const draw = d.home != null && d.home !== '' && d.away != null && d.away !== '' && Number(d.home) === Number(d.away);
+  box.hidden = !draw;
 }
 
 async function savePredictions() {
   const predictions = Object.entries(PoolState.draft)
     .filter(([, v]) => v.home !== '' && v.away !== '' && v.home != null && v.away != null)
-    .map(([matchId, v]) => ({ matchId: Number(matchId), home: v.home, away: v.away }));
+    .map(([matchId, v]) => ({ matchId: Number(matchId), home: v.home, away: v.away, adv: v.adv || null }));
   try {
     const r = await api('PUT', `/api/pools/${PoolState.slug}/predictions`,
       { predictions }, { 'x-participant-token': PoolState.me.token });
@@ -1225,14 +1308,14 @@ async function renderRanking() {
       <p class="muted tiebreak-note">Toque no <b>seu nome</b> pra ver seu desempenho jogo a jogo; em <b>outro nome</b> pra comparar. Empate em pontos desempata por mais placares exatos.</p>
       <div class="board-wrap"><table class="board"><thead><tr>
         <th class="num">#</th>${hasMoves ? '<th class="num" title="Variação na última rodada">↕</th>' : ''}<th>Participante</th>
-        <th class="num">Jogos</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th><th class="num">Total</th>
+        <th class="num" title="Pontuação total (placar + avanço)">Pontos</th><th class="num" title="Pontos ganhos com os placares dos jogos (sem o avanço)">Placar</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th>
       </tr></thead><tbody>
       ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''} board-row" data-name="${esc(r.name)}">
         <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
         ${hasMoves ? `<td class="num">${moveBadge(deltaByName.get(r.name) ?? 0)}</td>` : ''}
         <td><span class="name-cell">${avatarImg(r.avatar, r.name, 'av rk')}<span class="nm">${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span></td>
-        <td class="num">${r.match_pts}</td><td class="num">${aprov(r)}</td>
-        <td class="num">${r.exatos}</td><td class="num"><b>${r.total}</b></td>
+        <td class="num"><b>${r.total}</b></td><td class="num">${r.match_pts}</td>
+        <td class="num">${aprov(r)}</td><td class="num">${r.exatos}</td>
       </tr>`).join('')}
       </tbody></table></div></div>`;
 
@@ -1345,7 +1428,9 @@ function buildPerfPanel(mine) {
     const p = preds.get(m.id); maxGames += scoring.pts_exact;
     if (p) { ptsGames += p.points || 0; if (p.points > 0) acertos++; if (p.home_score === m.home_score && p.away_score === m.away_score) exatos++; }
   }
-  const qualPts = mine.qualifiers.reduce((s, q) => s + q.points, 0);
+  // "Avanço" = classificados de grupo (qualifiers) + quem avança no mata-mata (adv_points dos palpites)
+  const qualPts = mine.qualifiers.reduce((s, q) => s + q.points, 0)
+    + mine.predictions.reduce((s, p) => s + (p.adv_points || 0), 0);
   const aprov = maxGames ? Math.round((ptsGames / maxGames) * 100) : 0;
   const withPick = finished.filter((m) => preds.has(m.id)).length;
   PoolState._perfShare = { name: mine.name, total: mine.total, exatos, aprov, qualPts, poolName: PoolState.data.pool.name };
@@ -1444,11 +1529,14 @@ function pickReason(pred, m, scoring) {
   const x = phaseMultJS(m.stage);
   const v = (base) => Math.round(base * x);
   const xtag = x !== 1 ? ` (×${x})` : '';
-  if (ph === rh && pa === ra) return { label: `placar exato +${v(scoring.pts_exact)}${xtag}`, cls: 'exact', icon: '🎯' };
-  if (Math.sign(ph - pa) !== Math.sign(rh - ra)) return { label: 'errou', cls: 'wrong', icon: '❌' };
-  if (rh === ra) return { label: `acertou o empate +${v(scoring.pts_outcome)}${xtag}`, cls: 'out', icon: '🤝' };
-  if (ph - pa === rh - ra) return { label: `vencedor + saldo +${v(scoring.pts_goaldiff)}${xtag}`, cls: 'gd', icon: '↔️' };
-  return { label: `vencedor +${v(scoring.pts_outcome)}${xtag}`, cls: 'out', icon: '✅' };
+  let r;
+  if (ph === rh && pa === ra) r = { label: `placar exato +${v(scoring.pts_exact)}${xtag}`, cls: 'exact', icon: '🎯' };
+  else if (Math.sign(ph - pa) !== Math.sign(rh - ra)) r = { label: 'errou', cls: 'wrong', icon: '❌' };
+  else if (rh === ra) r = { label: `acertou o empate +${v(scoring.pts_outcome)}${xtag}`, cls: 'out', icon: '🤝' };
+  else if (ph - pa === rh - ra) r = { label: `vencedor + saldo +${v(scoring.pts_goaldiff)}${xtag}`, cls: 'gd', icon: '↔️' };
+  else r = { label: `vencedor +${v(scoring.pts_outcome)}${xtag}`, cls: 'out', icon: '✅' };
+  if (m.stage !== 'group' && pred.adv_points) r = { ...r, label: `${r.label} · avança ✓ +${pred.adv_points}` }; // bônus do mata-mata
+  return r;
 }
 
 
@@ -1772,7 +1860,7 @@ async function loadMatchPanel(card) {
       ${d.predictions.map((p, i) => `<div class="prow ${p.name === meName ? 'me' : ''}">
         <span class="prk">${hasResult && i === 0 && p.points > 0 ? '🥇' : (i + 1)}</span>
         <span class="pnm">${avatarImg(p.avatar, p.name, 'av xs')}<span>${esc(p.name)}${p.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span>
-        <span class="ppick">${p.home_score} x ${p.away_score}</span>
+        <span class="ppick">${p.home_score} x ${p.away_score}${p.adv_pick ? ` <small class="adv-mini">→ ${flag(p.adv_pick === 'home' ? d.match.home_team : d.match.away_team)}</small>` : ''}</span>
         ${hasResult ? `<span class="pill ${p.points ? 'pts' : ''} ppts">${p.points}</span>` : '<span class="ppts muted">—</span>'}
       </div>`).join('')}
     </div>`;
@@ -1916,12 +2004,16 @@ async function renderAdmin() {
       </div>
       <div class="row">
         <div class="field"><label>✅ Acertou vencedor/empate</label><input type="number" id="s-out" value="${s.pts_outcome}" min="0" max="100" /></div>
-        <div class="field"><label>🏆 Quem avança (por time)</label><input type="number" id="s-adv" value="${s.pts_advance}" min="0" max="100" /></div>
+        <div class="field"><label>🏆 Quem avança nos grupos (por time)</label><input type="number" id="s-adv" value="${s.pts_advance}" min="0" max="100" /></div>
       </div>
-      <p class="muted" style="margin:.2rem 0 .6rem">🤝 <b>Empate:</b> o bônus de saldo só vale em jogos com vencedor. Empate certo no placar = exato; empate certo sem o placar = só o acerto do resultado.</p>
+      <div class="row">
+        <div class="field"><label>🏅 Quem avança no mata-mata (por confronto)</label><input type="number" id="s-koadv" value="${s.pts_ko_advance}" min="0" max="100" /></div>
+        <div class="field"></div>
+      </div>
+      <p class="muted" style="margin:.2rem 0 .6rem">🤝 <b>Empate:</b> o bônus de saldo só vale em jogos com vencedor. Empate certo no placar = exato; empate certo sem o placar = só o acerto do resultado. No mata-mata, acertar <b>quem avança</b> (no empate, quem passa nos pênaltis) vale o bônus acima.</p>
 
-      <h4 style="margin:.6rem 0 .2rem">🔥 Mata-mata: multiplicador por fase</h4>
-      <p class="muted" style="margin:0 0 .5rem">Os pontos de cada jogo do mata-mata são multiplicados por estes valores (1 casa decimal). Ajuda quem ficou pra trás a ter chance de virada — quanto mais tarde a fase, mais vale.</p>
+      <h4 style="margin:.6rem 0 .2rem">🔥 Mata-mata: multiplicador do placar por fase</h4>
+      <p class="muted" style="margin:0 0 .5rem">Os pontos de placar de cada jogo do mata-mata são multiplicados por estes valores (1 casa decimal). Ajuda quem ficou pra trás a ter chance de virada — quanto mais tarde a fase, mais vale.</p>
       <div class="row mult-row">
         <div class="field"><label>16-avos ×</label><input type="number" id="m-r32" value="${s.mult_r32}" min="0" max="10" step="0.1" /></div>
         <div class="field"><label>Oitavas ×</label><input type="number" id="m-r16" value="${s.mult_r16}" min="0" max="10" step="0.1" /></div>
@@ -1931,6 +2023,19 @@ async function renderAdmin() {
         <div class="field"><label>Semis ×</label><input type="number" id="m-sf" value="${s.mult_sf}" min="0" max="10" step="0.1" /></div>
         <div class="field"><label>3º lugar ×</label><input type="number" id="m-third" value="${s.mult_third}" min="0" max="10" step="0.1" /></div>
         <div class="field"><label>Final ×</label><input type="number" id="m-final" value="${s.mult_final}" min="0" max="10" step="0.1" /></div>
+      </div>
+
+      <h4 style="margin:.6rem 0 .2rem">🏅 Mata-mata: multiplicador do "quem avança" por fase</h4>
+      <p class="muted" style="margin:0 0 .5rem">Multiplica o bônus de acertar quem avança, por fase (começa em 1). Suba se quiser que passar de fase valha mais no fim.</p>
+      <div class="row mult-row">
+        <div class="field"><label>16-avos ×</label><input type="number" id="a-r32" value="${s.adv_mult_r32}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>Oitavas ×</label><input type="number" id="a-r16" value="${s.adv_mult_r16}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>Quartas ×</label><input type="number" id="a-qf" value="${s.adv_mult_qf}" min="0" max="10" step="0.1" /></div>
+      </div>
+      <div class="row mult-row">
+        <div class="field"><label>Semis ×</label><input type="number" id="a-sf" value="${s.adv_mult_sf}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>3º lugar ×</label><input type="number" id="a-third" value="${s.adv_mult_third}" min="0" max="10" step="0.1" /></div>
+        <div class="field"><label>Final ×</label><input type="number" id="a-final" value="${s.adv_mult_final}" min="0" max="10" step="0.1" /></div>
       </div>
 
       <label style="font-weight:500"><input type="checkbox" id="s-lock" ${data.pool.lock_at_kickoff ? 'checked' : ''} style="width:auto;margin-right:.4rem" />Travar palpites no horário de início do jogo</label>
@@ -1980,10 +2085,15 @@ async function renderAdmin() {
       await api('PUT', `/api/pools/${PoolState.slug}/settings`, {
         pts_exact: $('#s-exact').value, pts_goaldiff: $('#s-gd').value,
         pts_outcome: $('#s-out').value, pts_advance: $('#s-adv').value,
+        pts_ko_advance: $('#s-koadv').value,
         lock_at_kickoff: $('#s-lock').checked,
         mult: {
           r32: $('#m-r32').value, r16: $('#m-r16').value, qf: $('#m-qf').value,
           sf: $('#m-sf').value, third: $('#m-third').value, final: $('#m-final').value,
+        },
+        adv_mult: {
+          r32: $('#a-r32').value, r16: $('#a-r16').value, qf: $('#a-qf').value,
+          sf: $('#a-sf').value, third: $('#a-third').value, final: $('#a-final').value,
         },
       }, { 'x-admin-token': adminToken });
       toast('Pontuação salva e ranking recalculado ✅');
@@ -2100,6 +2210,18 @@ function renderAdminMatches() {
           ${allTeams.map((t) => `<option value="${esc(t)}" ${val === t ? 'selected' : ''}>${flagEmoji(t)} ${esc(t)}</option>`).join('')}
         </select>`;
       };
+      let advAdm = '';
+      if (ko) {
+        const drawNow = m.home_score != null && m.away_score != null && m.home_score === m.away_score;
+        const hT = m.home_team || 'Mandante', aT = m.away_team || 'Visitante';
+        advAdm = `<div class="adv-pick adm" data-adv-for="${m.id}" ${drawNow ? '' : 'hidden'}>
+          <span class="adv-q">🤝 Empate — quem avançou (pênaltis)?</span>
+          <div class="adv-opts">
+            <button type="button" class="adv-opt ${m.advanced === 'home' ? 'sel' : ''}" data-advadm="${m.id}" data-advside="home">${flag(m.home_team)} ${esc(hT)}</button>
+            <button type="button" class="adv-opt ${m.advanced === 'away' ? 'sel' : ''}" data-advadm="${m.id}" data-advside="away">${flag(m.away_team)} ${esc(aT)}</button>
+          </div>
+        </div>`;
+      }
       html += `<div class="match" style="grid-template-columns:1fr;gap:.4rem">
         <div class="muted" style="display:flex;justify-content:space-between">
           <span>${esc(m.round_label)}</span><span>${esc(fmtDate(m.kickoff))} ${m.finished ? '<span class="pill done">final</span>' : ''}</span>
@@ -2113,6 +2235,7 @@ function renderAdminMatches() {
           </div>
           <div style="text-align:right">${teamSel('away', m.away_team)}</div>
         </div>
+        ${advAdm}
         <div class="row">
           <button class="btn-primary btn-sm" data-save-match="${m.id}">Salvar</button>
           ${m.finished ? `<button class="btn-soft btn-sm" data-clear-match="${m.id}" style="flex:0">Limpar placar</button>` : ''}
@@ -2127,6 +2250,21 @@ function renderAdminMatches() {
   });
   cont.querySelectorAll('[data-clear-match]').forEach((btn) => {
     btn.onclick = () => saveMatch(btn.dataset.clearMatch, true);
+  });
+  // seletor "quem avançou" (mata-mata em empate)
+  cont.querySelectorAll('[data-advadm]').forEach((b) => {
+    b.onclick = () => b.closest('.adv-opts').querySelectorAll('.adv-opt').forEach((x) => x.classList.toggle('sel', x === b));
+  });
+  // mostra/esconde o seletor de quem avançou conforme o placar do mata-mata fica empatado
+  cont.querySelectorAll('input[data-am][data-side]').forEach((inp) => {
+    inp.oninput = () => {
+      const id = inp.dataset.am;
+      const box = cont.querySelector(`.adv-pick.adm[data-adv-for="${id}"]`);
+      if (!box) return;
+      const h = cont.querySelector(`input[data-am="${id}"][data-side="home"]`).value;
+      const a = cont.querySelector(`input[data-am="${id}"][data-side="away"]`).value;
+      box.hidden = !(h !== '' && a !== '' && Number(h) === Number(a));
+    };
   });
 }
 
@@ -2144,6 +2282,8 @@ async function saveMatch(id, clear) {
     const hi = cont.querySelector(`input[data-am="${id}"][data-side="home"]`).value;
     const ai = cont.querySelector(`input[data-am="${id}"][data-side="away"]`).value;
     if (hi !== '' && ai !== '') { body.home_score = hi; body.away_score = ai; }
+    const advSel = cont.querySelector(`[data-advadm="${id}"].sel`); // quem avançou (empate de mata-mata)
+    if (advSel) body.advanced = advSel.dataset.advside;
   }
   try {
     await api('PUT', `/api/pools/${PoolState.slug}/matches/${id}`, body, { 'x-admin-token': adminToken });

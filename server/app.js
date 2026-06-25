@@ -5,7 +5,7 @@ import {
   all, get, run, ensureSchema, USE_PG,
   createPool, genToken, hashPin,
   recomputeMatch, recomputeAdvanceAll, recomputeAdvanceForParticipant, resolveKnockout,
-  phaseMult, KO_STAGES, DEFAULT_MULT,
+  phaseMult, advMult, advanceSide, KO_STAGES, DEFAULT_MULT, DEFAULT_KO_ADVANCE,
 } from './store.js';
 import { syncPool, maybeSync, SYNC_ENABLED, diagnose, matchGoals } from './sync.js';
 import { GROUPS, FLAGS, CODES, STAGE_NAMES, FIFA_RANK } from '../data/wc2026.js';
@@ -88,8 +88,10 @@ function publicPool(pool) {
   const scoring = {
     pts_exact: pool.pts_exact, pts_goaldiff: pool.pts_goaldiff,
     pts_outcome: pool.pts_outcome, pts_advance: pool.pts_advance,
+    pts_ko_advance: pool.pts_ko_advance ?? DEFAULT_KO_ADVANCE, // "quem avança" no mata-mata
   };
-  for (const s of KO_STAGES) scoring['mult_' + s] = phaseMult(pool, s); // multiplicadores do mata-mata
+  for (const s of KO_STAGES) scoring['mult_' + s] = phaseMult(pool, s); // multiplicadores do placar no mata-mata
+  for (const s of KO_STAGES) scoring['adv_mult_' + s] = advMult(pool, s); // multiplicadores do bônus "quem avança"
   return {
     slug: pool.slug, name: pool.name, scoring,
     lock_at_kickoff: !!pool.lock_at_kickoff,
@@ -120,6 +122,7 @@ function matchPublic(m) {
     round_label: m.round_label, home_team: m.home_team, away_team: m.away_team,
     home_label: m.home_label, away_label: m.away_label, kickoff: m.kickoff,
     home_score: m.home_score, away_score: m.away_score, finished: !!m.finished,
+    advanced: m.advanced || null, // mata-mata: 'home'|'away' (quem passou — usado em empate/pênaltis)
     locked: !!m.finished || (new Date(m.kickoff).getTime() <= Date.now()),
   };
 }
@@ -189,10 +192,10 @@ app.get('/api/pools/:slug/me', wrap(async (req, res) => {
   const me = await getParticipant(req, pool);
   if (!me) return res.status(401).json({ error: 'Sessão inválida. Entre novamente.' });
   const preds = await all(
-    'SELECT match_id, home_score, away_score, points, updated_at FROM predictions WHERE participant_id = $1', [me.id]);
+    'SELECT match_id, home_score, away_score, points, adv_pick, adv_points, updated_at FROM predictions WHERE participant_id = $1', [me.id]);
   const quals = await all(
     'SELECT group_label, team_first, team_second, points FROM qualifiers WHERE participant_id = $1', [me.id]);
-  const total = preds.reduce((s, p) => s + p.points, 0) + quals.reduce((s, q) => s + q.points, 0);
+  const total = preds.reduce((s, p) => s + p.points + (p.adv_points || 0), 0) + quals.reduce((s, q) => s + q.points, 0);
   const lastSaved = preds.reduce((mx, p) => {
     const t = p.updated_at ? new Date(p.updated_at).getTime() : 0;
     return t > mx ? t : mx;
@@ -224,12 +227,15 @@ app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
     const h = Math.max(0, Math.min(99, parseInt(p.home, 10)));
     const a = Math.max(0, Math.min(99, parseInt(p.away, 10)));
     if (Number.isNaN(h) || Number.isNaN(a)) { skipped++; continue; }
+    // "quem avança" só faz sentido no mata-mata e quando o palpite é empate (senão é o vencedor).
+    const advPick = (m.stage !== 'group' && h === a && (p.adv === 'home' || p.adv === 'away')) ? p.adv : null;
     const pts = scoreFor(pool, h, a, m);
-    await run(`INSERT INTO predictions (participant_id, match_id, home_score, away_score, points, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6)
+    const advPts = advanceFor(pool, h, a, advPick, m);
+    await run(`INSERT INTO predictions (participant_id, match_id, home_score, away_score, points, adv_pick, adv_points, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT (participant_id, match_id)
-      DO UPDATE SET home_score = excluded.home_score, away_score = excluded.away_score, points = excluded.points, updated_at = excluded.updated_at`,
-      [me.id, m.id, h, a, pts, new Date().toISOString()]);
+      DO UPDATE SET home_score = excluded.home_score, away_score = excluded.away_score, points = excluded.points, adv_pick = excluded.adv_pick, adv_points = excluded.adv_points, updated_at = excluded.updated_at`,
+      [me.id, m.id, h, a, pts, advPick, advPts, new Date().toISOString()]);
     saved++;
   }
 
@@ -280,6 +286,15 @@ function scoreFor(pool, ph, pa, m) {
   if (!base) return 0;
   return Math.round(base * phaseMult(pool, m.stage));
 }
+// Bônus "quem avança" para um palpite recém-salvo (0 enquanto o jogo não tem resultado).
+function advanceFor(pool, ph, pa, advPick, m) {
+  if (!KO_STAGES.includes(m.stage)) return 0;
+  const real = advanceSide(m.home_score, m.away_score, m.advanced);
+  if (!real) return 0;
+  const mine = advanceSide(ph, pa, advPick);
+  if (!mine || mine !== real) return 0;
+  return Math.round((pool.pts_ko_advance ?? DEFAULT_KO_ADVANCE) * advMult(pool, m.stage));
+}
 
 // ---------- leaderboard ----------
 app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
@@ -288,7 +303,8 @@ app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
   const rows = await all(`
     SELECT pa.name, pa.avatar,
       COALESCE((SELECT SUM(points) FROM predictions WHERE participant_id = pa.id), 0) AS match_pts,
-      COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id), 0) AS qual_pts,
+      COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id), 0)
+        + COALESCE((SELECT SUM(adv_points) FROM predictions WHERE participant_id = pa.id), 0) AS qual_pts,
       (SELECT COUNT(*) FROM predictions pr JOIN matches m ON m.id = pr.match_id
          WHERE pr.participant_id = pa.id AND m.finished = 1
            AND pr.home_score = m.home_score AND pr.away_score = m.away_score) AS exatos
@@ -307,6 +323,7 @@ async function rankedParticipants(poolId) {
   const rows = await all(`
     SELECT pa.id, pa.name,
       COALESCE((SELECT SUM(points) FROM predictions WHERE participant_id = pa.id), 0)
+      + COALESCE((SELECT SUM(adv_points) FROM predictions WHERE participant_id = pa.id), 0)
       + COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id), 0) AS total,
       (SELECT COUNT(*) FROM predictions pr JOIN matches m ON m.id = pr.match_id
          WHERE pr.participant_id = pa.id AND m.finished = 1
@@ -370,7 +387,7 @@ app.get('/api/pools/:slug/history', wrap(async (req, res) => {
   if (!parts.length) return res.json({ rounds: [] });
 
   const preds = await all(
-    `SELECT pr.participant_id AS pid, pr.points AS pts, m.kickoff AS kickoff
+    `SELECT pr.participant_id AS pid, (pr.points + COALESCE(pr.adv_points, 0)) AS pts, m.kickoff AS kickoff
        FROM predictions pr JOIN matches m ON m.id = pr.match_id
       WHERE m.pool_id = $1 AND m.finished = 1`, [pool.id]);
   const quals = await all('SELECT participant_id AS pid, group_label, points FROM qualifiers WHERE pool_id = $1', [pool.id]);
@@ -423,14 +440,14 @@ app.get('/api/pools/:slug/participants/:name', wrap(async (req, res) => {
   if (!p) return res.status(404).json({ error: 'Participante não encontrado.' });
   const now = Date.now();
   const rows = await all(
-    `SELECT pr.match_id, pr.home_score, pr.away_score, pr.points, m.kickoff, m.finished
+    `SELECT pr.match_id, pr.home_score, pr.away_score, pr.points, pr.adv_pick, pr.adv_points, m.kickoff, m.finished
        FROM predictions pr JOIN matches m ON m.id = pr.match_id
       WHERE pr.participant_id = $1`, [p.id]);
   const predictions = rows
     .filter((r) => r.finished || new Date(r.kickoff).getTime() - REVEAL_LEAD_MS <= now) // a partir de 2h antes
-    .map((r) => ({ match_id: r.match_id, home_score: r.home_score, away_score: r.away_score, points: r.points }));
+    .map((r) => ({ match_id: r.match_id, home_score: r.home_score, away_score: r.away_score, points: r.points, adv_pick: r.adv_pick || null, adv_points: Number(r.adv_points || 0) }));
   const quals = await all('SELECT group_label, points FROM qualifiers WHERE participant_id = $1', [p.id]);
-  const total = rows.reduce((s, r) => s + Number(r.points), 0) + quals.reduce((s, q) => s + Number(q.points), 0);
+  const total = rows.reduce((s, r) => s + Number(r.points) + Number(r.adv_points || 0), 0) + quals.reduce((s, q) => s + Number(q.points), 0);
   res.json({ name: p.name, predictions, total });
 }));
 
@@ -443,12 +460,12 @@ app.get('/api/pools/:slug/matches/:id/predictions', wrap(async (req, res) => {
   const started = !!m.finished || new Date(m.kickoff).getTime() - REVEAL_LEAD_MS <= Date.now();
   if (!started) return res.json({ match: matchPublic(m), revealed: false, predictions: [] });
   const rows = await all(
-    `SELECT pa.name, pa.avatar, pr.home_score, pr.away_score, pr.points
+    `SELECT pa.name, pa.avatar, pr.home_score, pr.away_score, pr.points, pr.adv_pick, pr.adv_points
        FROM predictions pr JOIN participants pa ON pa.id = pr.participant_id
       WHERE pr.match_id = $1 AND pa.pool_id = $2`, [m.id, pool.id]);
   const total = await get('SELECT COUNT(*) AS c FROM participants WHERE pool_id = $1', [pool.id]);
   const predictions = rows
-    .map((r) => ({ name: r.name, avatar: r.avatar || null, home_score: r.home_score, away_score: r.away_score, points: r.points }))
+    .map((r) => ({ name: r.name, avatar: r.avatar || null, home_score: r.home_score, away_score: r.away_score, points: Number(r.points) + Number(r.adv_points || 0), adv_pick: r.adv_pick || null, adv_points: Number(r.adv_points || 0) }))
     .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
   // autores dos gols (ESPN) — só faz sentido quando o jogo começou
   let goals = [];
@@ -518,12 +535,16 @@ app.put('/api/pools/:slug/matches/:id', wrap(async (req, res) => {
   let touchedResult = false;
   if ('home_score' in b || 'away_score' in b) {
     const clear = b.home_score === null || b.away_score === null || b.home_score === '' || b.away_score === '';
-    if (clear) { push('home_score', null); push('away_score', null); push('finished', 0); }
+    if (clear) { push('home_score', null); push('away_score', null); push('finished', 0); push('advanced', null); }
     else {
       const h = Math.max(0, Math.min(99, parseInt(b.home_score, 10)));
       const a = Math.max(0, Math.min(99, parseInt(b.away_score, 10)));
       if (Number.isNaN(h) || Number.isNaN(a)) return res.status(400).json({ error: 'Placar inválido.' });
       push('home_score', h); push('away_score', a); push('finished', 1);
+      // Quem avança: no mata-mata, vitória já define o vencedor (derivado do placar);
+      // só no EMPATE (pênaltis) o admin precisa dizer quem passou.
+      const advanced = (m.stage !== 'group' && h === a && (b.advanced === 'home' || b.advanced === 'away')) ? b.advanced : null;
+      push('advanced', advanced);
     }
     touchedResult = true;
   }
@@ -552,14 +573,17 @@ app.put('/api/pools/:slug/settings', wrap(async (req, res) => {
     pts_goaldiff: clamp(b.pts_goaldiff, pool.pts_goaldiff),
     pts_outcome: clamp(b.pts_outcome, pool.pts_outcome),
     pts_advance: clamp(b.pts_advance, pool.pts_advance),
+    pts_ko_advance: clamp(b.pts_ko_advance, pool.pts_ko_advance ?? DEFAULT_KO_ADVANCE),
     lock_at_kickoff: b.lock_at_kickoff ? 1 : 0,
   };
-  await run(`UPDATE pools SET pts_exact=$1, pts_goaldiff=$2, pts_outcome=$3, pts_advance=$4, lock_at_kickoff=$5 WHERE id=$6`,
-    [f.pts_exact, f.pts_goaldiff, f.pts_outcome, f.pts_advance, f.lock_at_kickoff, pool.id]);
-  // multiplicadores do mata-mata
+  await run(`UPDATE pools SET pts_exact=$1, pts_goaldiff=$2, pts_outcome=$3, pts_advance=$4, pts_ko_advance=$5, lock_at_kickoff=$6 WHERE id=$7`,
+    [f.pts_exact, f.pts_goaldiff, f.pts_outcome, f.pts_advance, f.pts_ko_advance, f.lock_at_kickoff, pool.id]);
+  // multiplicadores do placar no mata-mata + multiplicadores do bônus "quem avança"
   for (const s of KO_STAGES) {
     const val = clampMult((b.mult || {})[s], phaseMult(pool, s));
     await run(`UPDATE pools SET mult_${s} = $1 WHERE id = $2`, [val, pool.id]);
+    const adv = clampMult((b.adv_mult || {})[s], advMult(pool, s));
+    await run(`UPDATE pools SET adv_mult_${s} = $1 WHERE id = $2`, [adv, pool.id]);
   }
 
   const finished = await all('SELECT id FROM matches WHERE pool_id = $1 AND finished = 1', [pool.id]);

@@ -11,6 +11,10 @@ const USE_PG = !!process.env.DATABASE_URL;
 // Fases do mata-mata e multiplicadores padrão de pontuação (admin configura).
 export const KO_STAGES = ['r32', 'r16', 'qf', 'sf', 'third', 'final'];
 export const DEFAULT_MULT = { r32: 1.5, r16: 2.0, qf: 3.0, sf: 4.0, third: 2.0, final: 5.0 };
+// Pontos por acertar QUEM AVANÇA num confronto de mata-mata (além do placar) e o
+// multiplicador por fase desse bônus (começa em 1 — o admin pode subir depois).
+export const DEFAULT_KO_ADVANCE = 10;
+export const DEFAULT_ADV_MULT = { r32: 1, r16: 1, qf: 1, sf: 1, third: 1, final: 1 };
 
 // ---------- driver ----------
 // A inicialização NUNCA lança no import: se falhar (ex.: SQLite num filesystem
@@ -175,6 +179,12 @@ export function ensureSchema() {
         await pgPool.query('ALTER TABLE predictions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ').catch(() => {});
         await pgPool.query('ALTER TABLE participants ADD COLUMN IF NOT EXISTS avatar TEXT').catch(() => {});
         for (const s of KO_STAGES) await pgPool.query(`ALTER TABLE pools ADD COLUMN IF NOT EXISTS mult_${s} REAL NOT NULL DEFAULT ${DEFAULT_MULT[s]}`).catch(() => {});
+        // "quem avança" no mata-mata: base de pontos + multiplicador por fase, e onde guardar o palpite/resultado.
+        await pgPool.query(`ALTER TABLE pools ADD COLUMN IF NOT EXISTS pts_ko_advance INTEGER NOT NULL DEFAULT ${DEFAULT_KO_ADVANCE}`).catch(() => {});
+        for (const s of KO_STAGES) await pgPool.query(`ALTER TABLE pools ADD COLUMN IF NOT EXISTS adv_mult_${s} REAL NOT NULL DEFAULT ${DEFAULT_ADV_MULT[s]}`).catch(() => {});
+        await pgPool.query("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS adv_pick TEXT").catch(() => {});
+        await pgPool.query('ALTER TABLE predictions ADD COLUMN IF NOT EXISTS adv_points INTEGER NOT NULL DEFAULT 0').catch(() => {});
+        await pgPool.query("ALTER TABLE matches ADD COLUMN IF NOT EXISTS advanced TEXT").catch(() => {});
       } else {
         sqlite.exec(SCHEMA_SQLITE);
         try { sqlite.exec('ALTER TABLE pools ADD COLUMN synced_at TEXT'); } catch (_) { /* já existe */ }
@@ -182,6 +192,11 @@ export function ensureSchema() {
         try { sqlite.exec('ALTER TABLE predictions ADD COLUMN updated_at TEXT'); } catch (_) { /* já existe */ }
         try { sqlite.exec('ALTER TABLE participants ADD COLUMN avatar TEXT'); } catch (_) { /* já existe */ }
         for (const s of KO_STAGES) { try { sqlite.exec(`ALTER TABLE pools ADD COLUMN mult_${s} REAL NOT NULL DEFAULT ${DEFAULT_MULT[s]}`); } catch (_) { /* já existe */ } }
+        try { sqlite.exec(`ALTER TABLE pools ADD COLUMN pts_ko_advance INTEGER NOT NULL DEFAULT ${DEFAULT_KO_ADVANCE}`); } catch (_) { /* já existe */ }
+        for (const s of KO_STAGES) { try { sqlite.exec(`ALTER TABLE pools ADD COLUMN adv_mult_${s} REAL NOT NULL DEFAULT ${DEFAULT_ADV_MULT[s]}`); } catch (_) { /* já existe */ } }
+        try { sqlite.exec('ALTER TABLE predictions ADD COLUMN adv_pick TEXT'); } catch (_) { /* já existe */ }
+        try { sqlite.exec('ALTER TABLE predictions ADD COLUMN adv_points INTEGER NOT NULL DEFAULT 0'); } catch (_) { /* já existe */ }
+        try { sqlite.exec('ALTER TABLE matches ADD COLUMN advanced TEXT'); } catch (_) { /* já existe */ }
       }
     })().catch((e) => {
       // Não envenena o cache: permite nova tentativa no próximo acesso.
@@ -251,6 +266,30 @@ export function phaseMult(pool, stage) {
   const v = Number(pool['mult_' + stage]);
   return Number.isFinite(v) && v >= 0 ? v : (DEFAULT_MULT[stage] || 1);
 }
+// Multiplicador do bônus de "quem avança" no mata-mata (separado do placar). Grupos = 1.
+export function advMult(pool, stage) {
+  if (!KO_STAGES.includes(stage)) return 1;
+  const v = Number(pool['adv_mult_' + stage]);
+  return Number.isFinite(v) && v >= 0 ? v : (DEFAULT_ADV_MULT[stage] || 1);
+}
+// Lado que avança num confronto, conforme um placar. Em caso de EMPATE, depende da
+// escolha explícita ('home'/'away'); sem escolha, fica indefinido (null).
+export function advanceSide(h, a, pick) {
+  if (h == null || a == null) return null;
+  if (h > a) return 'home';
+  if (h < a) return 'away';
+  return pick === 'home' || pick === 'away' ? pick : null;
+}
+// Pontos do bônus "quem avança" para um palpite, contra o resultado real (só mata-mata).
+export function scoreAdvance(pool, pred, m) {
+  if (!KO_STAGES.includes(m.stage)) return 0;
+  const real = advanceSide(m.home_score, m.away_score, m.advanced);
+  if (!real) return 0; // jogo sem resultado, ou empate sem quem-avança definido pelo admin
+  const mine = advanceSide(pred.home_score, pred.away_score, pred.adv_pick);
+  if (!mine || mine !== real) return 0;
+  const base = Number(pool.pts_ko_advance);
+  return Math.round((Number.isFinite(base) ? base : DEFAULT_KO_ADVANCE) * advMult(pool, m.stage));
+}
 function scoreMatch(pool, pred, m) {
   if (m.home_score == null || m.away_score == null) return 0;
   const ph = pred.home_score, pa = pred.away_score;
@@ -272,7 +311,8 @@ export async function recomputeMatch(matchId) {
   const pool = await get('SELECT * FROM pools WHERE id = $1', [m.pool_id]);
   const preds = await all('SELECT * FROM predictions WHERE match_id = $1', [matchId]);
   for (const p of preds) {
-    await run('UPDATE predictions SET points = $1 WHERE id = $2', [scoreMatch(pool, p, m), p.id]);
+    await run('UPDATE predictions SET points = $1, adv_points = $2 WHERE id = $3',
+      [scoreMatch(pool, p, m), scoreAdvance(pool, p, m), p.id]);
   }
 }
 
