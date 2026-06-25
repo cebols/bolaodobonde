@@ -284,8 +284,8 @@ table.stand tr.q3 td.pos { color: var(--gold); }
 
 /* ---------- leaderboard ---------- */
 .board-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table.board { width: 100%; border-collapse: collapse; min-width: 380px; }
-table.board th, table.board td { padding: 0.45rem 0.5rem; text-align: left; border-bottom: 1px solid var(--line); }
+table.board { width: 100%; border-collapse: collapse; min-width: 340px; }
+table.board th, table.board td { padding: 0.32rem 0.36rem; text-align: left; border-bottom: 1px solid var(--line); }
 table.board th { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
 table.board td.num, table.board th.num { text-align: center; }
 table.board tr.me { background: var(--goldbg); }
@@ -479,7 +479,7 @@ table.cmp-table td, table.cmp-table th { padding: 0.4rem 0.45rem; font-size: 0.8
 .av.av-ph { color: #fff; font-weight: 800; font-size: 0.7rem; }
 .av.sm { width: 24px; height: 24px; font-size: 0.6rem; }
 .av.xs { width: 20px; height: 20px; font-size: 0.55rem; }
-.av.rk { width: 40px; height: 40px; font-size: 0.92rem; }
+.av.rk { width: 32px; height: 32px; font-size: 0.82rem; }
 .av.lg { width: 52px; height: 52px; font-size: 1.1rem; }
 .name-cell { display: inline-flex; align-items: center; gap: 0.45rem; min-width: 0; }
 .name-cell .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1308,13 +1308,13 @@ async function renderRanking() {
       <p class="muted tiebreak-note">Toque no <b>seu nome</b> pra ver seu desempenho jogo a jogo; em <b>outro nome</b> pra comparar. Empate em pontos desempata por mais placares exatos.</p>
       <div class="board-wrap"><table class="board"><thead><tr>
         <th class="num">#</th>${hasMoves ? '<th class="num" title="Variação na última rodada">↕</th>' : ''}<th>Participante</th>
-        <th class="num" title="Pontuação total (placar + avanço)">Pontos</th><th class="num" title="Pontos ganhos com os placares dos jogos (sem o avanço)">Placar</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th>
+        <th class="num" title="Pontuação total (placar + avanço)">Pontos</th><th class="num" title="Seleções que acertou passando de fase (de 32)">x/32</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th>
       </tr></thead><tbody>
       ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''} board-row" data-name="${esc(r.name)}">
         <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
         ${hasMoves ? `<td class="num">${moveBadge(deltaByName.get(r.name) ?? 0)}</td>` : ''}
         <td><span class="name-cell">${avatarImg(r.avatar, r.name, 'av rk')}<span class="nm">${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span></td>
-        <td class="num"><b>${r.total}</b></td><td class="num">${r.match_pts}</td>
+        <td class="num"><b>${r.total}</b></td><td class="num">${r.grp_adv ?? '-'}/32</td>
         <td class="num">${aprov(r)}</td><td class="num">${r.exatos}</td>
       </tr>`).join('')}
       </tbody></table></div></div>`;

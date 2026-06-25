@@ -2,7 +2,7 @@
 // Requer a env var FOOTBALL_DATA_TOKEN (chave gratuita de https://football-data.org).
 // É best-effort: se a API falhar ou um jogo não casar, o app segue normal e o
 // admin pode lançar/ajustar o placar na mão.
-import { all, get, run, recomputeMatch, recomputeAdvanceAll, resolveKnockout } from './store.js';
+import { all, get, run, recomputeMatch, recomputeAdvanceAll, resolveKnockout, KO_STAGES } from './store.js';
 import { EN_TO_PT, STAGE_NAMES } from '../data/wc2026.js';
 
 const TOKEN = process.env.FOOTBALL_DATA_TOKEN || '';
@@ -218,9 +218,18 @@ export async function syncPool(pool, { force = false } = {}) {
     const sc = scoreFromEspn(m, espn) || scoreOf(fd);
     if (!sc) continue;
     const fin = sc.finished ? 1 : 0;
-    if (m.home_score === sc.h && m.away_score === sc.a && (m.finished ? 1 : 0) === fin) continue;
-    await run('UPDATE matches SET home_score = $1, away_score = $2, finished = $3 WHERE id = $4',
-      [sc.h, sc.a, fin, m.id]);
+    // Auto-detecta quem avançou em empates do mata-mata via placar de pênaltis (football-data).
+    let detectedAdv = m.advanced || null;
+    if (fin && sc.h === sc.a && m.stage && KO_STAGES.includes(m.stage)) {
+      const pen = fd.score?.penalties;
+      if (pen && pen.home != null && pen.away != null && pen.home !== pen.away) {
+        detectedAdv = pen.home > pen.away ? 'home' : 'away';
+      }
+    }
+    const scoreUnchanged = m.home_score === sc.h && m.away_score === sc.a && (m.finished ? 1 : 0) === fin;
+    if (scoreUnchanged && (m.advanced || null) === detectedAdv) continue;
+    await run('UPDATE matches SET home_score = $1, away_score = $2, finished = $3, advanced = $4 WHERE id = $5',
+      [sc.h, sc.a, fin, detectedAdv, m.id]);
     await recomputeMatch(m.id);
     if (m.group_label) touchedGroups.add(m.group_label);
     updated++;

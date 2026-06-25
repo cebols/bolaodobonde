@@ -305,14 +305,17 @@ app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
       COALESCE((SELECT SUM(points) FROM predictions WHERE participant_id = pa.id), 0) AS match_pts,
       COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id), 0)
         + COALESCE((SELECT SUM(adv_points) FROM predictions WHERE participant_id = pa.id), 0) AS qual_pts,
+      COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id) / NULLIF($2, 0), 0) AS grp_adv,
       (SELECT COUNT(*) FROM predictions pr JOIN matches m ON m.id = pr.match_id
          WHERE pr.participant_id = pa.id AND m.finished = 1
            AND pr.home_score = m.home_score AND pr.away_score = m.away_score) AS exatos
-    FROM participants pa WHERE pa.pool_id = $1`, [pool.id]);
+    FROM participants pa WHERE pa.pool_id = $1`, [pool.id, pool.pts_advance]);
   const board = rows.map((r) => ({
     name: r.name, avatar: r.avatar || null,
     total: Number(r.match_pts) + Number(r.qual_pts),
-    match_pts: Number(r.match_pts), qual_pts: Number(r.qual_pts), exatos: Number(r.exatos),
+    match_pts: Number(r.match_pts), qual_pts: Number(r.qual_pts),
+    grp_adv: Math.round(Number(r.grp_adv || 0)),
+    exatos: Number(r.exatos),
   })).sort((a, b) => b.total - a.total || b.exatos - a.exatos || a.name.localeCompare(b.name));
   res.json({ leaderboard: board });
 }));
