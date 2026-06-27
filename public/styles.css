@@ -239,6 +239,43 @@ table.stand tr.q3 td.pos { color: var(--gold); }
 
 .locked-stage { background: var(--bg2); color: var(--muted); text-align: center; font-size: 0.9rem; }
 
+/* ---------- fase de grupos encerrada (collapse) ---------- */
+details.group-done-details, details.pstage-done { margin-bottom: 1rem; }
+details.group-done-details > summary, details.pstage-done > summary {
+  list-style: none; cursor: pointer; padding: .55rem .8rem;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  font-weight: 600; font-size: .88rem; display: flex; align-items: center; gap: .45rem;
+  user-select: none;
+}
+details.group-done-details > summary::-webkit-details-marker,
+details.pstage-done > summary::-webkit-details-marker { display: none; }
+details.group-done-details > summary::before,
+details.pstage-done > summary::before { content: '▸'; flex-shrink: 0; font-size: .8rem; transition: transform .2s; }
+details.group-done-details[open] > summary::before,
+details.pstage-done[open] > summary::before { transform: rotate(90deg); }
+details.pstage-done > div { padding-top: .5rem; }
+
+/* ---------- painel comparativo de classificados ---------- */
+.qc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; margin-bottom: .5rem; }
+.qc-group { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: .45rem .6rem; }
+.qc-group.partial { border-color: var(--goldbg); }
+.qc-gh { font-weight: 700; font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: .25rem; }
+.qc-row { display: flex; align-items: center; gap: .2rem; padding: .1rem 0; font-size: .78rem; min-width: 0; }
+.qc-row.hit { background: var(--q1bg); border-radius: 5px; padding: .1rem .25rem; margin: .05rem -.25rem; }
+.qc-row.miss { background: var(--dangerbg); border-radius: 5px; padding: .1rem .25rem; margin: .05rem -.25rem; }
+.qc-real, .qc-pred { display: flex; align-items: center; gap: .15rem; flex: 1; min-width: 0; }
+.qc-real span, .qc-pred span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.qc-sep { color: var(--muted); font-size: .7rem; flex-shrink: 0; }
+.qc-ok { font-size: .78rem; flex-shrink: 0; }
+.qc-thirds { display: flex; flex-direction: column; gap: .18rem; }
+.qc-third { display: flex; align-items: center; gap: .3rem; padding: .2rem .3rem; border-radius: 7px; font-size: .82rem; }
+.qc-third.hit { background: var(--q1bg); }
+.qc-third.miss { background: var(--dangerbg); }
+.qc-third.out { opacity: .5; }
+.qc-rank { color: var(--muted); width: 1.5rem; text-align: right; flex-shrink: 0; font-size: .76rem; }
+.qc-tnm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qc-grp { color: var(--muted); font-size: .74rem; flex-shrink: 0; }
+
 /* ---------- bracket (chave / ampulheta) ---------- */
 .bracket-intro { margin-bottom: 0.6rem; }
 .champion {

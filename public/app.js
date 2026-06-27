@@ -429,6 +429,74 @@ function drawPoolShell() {
 // ---------- aba: palpites ----------
 const PREREQ_NAME = { r32: 'Fase de Grupos', r16: '16-avos', qf: 'Oitavas', sf: 'Quartas', third: 'Semifinais', final: 'Semifinais' };
 
+// Jogos reais de um grupo (usando placares finais, não o rascunho).
+function realGroupGames(g) {
+  return (PoolState.data.matches || [])
+    .filter((m) => m.stage === 'group' && m.group_label === g)
+    .map((m) => ({ home_team: m.home_team, away_team: m.away_team, home_score: m.home_score, away_score: m.away_score }));
+}
+function realPosRows(idx) {
+  return Object.keys(META.groups).map((g) => {
+    const t = groupTableJS(META.groups[g], realGroupGames(g));
+    return { ...(t[idx] || {}), group: g };
+  });
+}
+function realThirdsRows() {
+  return realPosRows(2).sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || fifaRk(x.team) - fifaRk(y.team) || (x.team || '').localeCompare(y.team || ''));
+}
+
+// Painel comparativo: classificados reais × palpites salvos do usuário.
+function qualCompareHtml() {
+  const groupKeys = Object.keys(META.groups);
+  let groupRows = '';
+  for (const g of groupKeys) {
+    const games = realGroupGames(g);
+    if (!games.some((m) => m.home_score != null)) continue;
+    const allDone = games.every((m) => m.home_score != null);
+    const t = groupTableJS(META.groups[g], games);
+    const real1 = t[0]?.team, real2 = t[1]?.team;
+    const pred = PoolState.qsaved[g] || {};
+    const pred1 = pred.team_first, pred2 = pred.team_second;
+    const realTop2 = new Set([real1, real2].filter(Boolean));
+    const h1 = !!(pred1 && realTop2.has(pred1)), h2 = !!(pred2 && realTop2.has(pred2));
+    groupRows += `<div class="qc-group${allDone ? '' : ' partial'}">
+      <div class="qc-gh">${allDone ? '' : '⏳ '}Grupo ${g}</div>
+      <div class="qc-row${h1 ? ' hit' : (pred1 ? ' miss' : '')}">
+        <span class="qc-real">${real1 ? flag(real1) + `<span>${esc(real1)}</span>` : '<span class="muted">?</span>'}</span>
+        <span class="qc-sep">×</span>
+        <span class="qc-pred">${pred1 ? flag(pred1) + `<span>${esc(pred1)}</span>` : '<span class="muted">—</span>'}</span>
+        <span class="qc-ok">${pred1 ? (h1 ? '✅' : '❌') : ''}</span>
+      </div>
+      <div class="qc-row${h2 ? ' hit' : (pred2 ? ' miss' : '')}">
+        <span class="qc-real">${real2 ? flag(real2) + `<span>${esc(real2)}</span>` : '<span class="muted">?</span>'}</span>
+        <span class="qc-sep">×</span>
+        <span class="qc-pred">${pred2 ? flag(pred2) + `<span>${esc(pred2)}</span>` : '<span class="muted">—</span>'}</span>
+        <span class="qc-ok">${pred2 ? (h2 ? '✅' : '❌') : ''}</span>
+      </div>
+    </div>`;
+  }
+  if (!groupRows) return '';
+
+  const realT = realThirdsRows().filter((r) => r.team);
+  const predT8 = new Set(thirdsRows().slice(0, 8).map((r) => r.team));
+  let thirdsCompare = '';
+  for (const [i, r] of realT.entries()) {
+    const realIn = i < 8, predIn = predT8.has(r.team);
+    const hit = realIn && predIn, miss = realIn && !predIn;
+    thirdsCompare += `<div class="qc-third${hit ? ' hit' : (miss ? ' miss' : '')}${realIn ? '' : ' out'}">
+      <span class="qc-rank">${i + 1}</span>
+      ${flag(r.team)}<span class="qc-tnm">${esc(r.team)}</span>
+      <span class="qc-grp">${r.group}</span>
+      <span class="qc-ok">${realIn ? (predIn ? '✅' : '❌') : (predIn ? '❌' : '')}</span>
+    </div>`;
+  }
+
+  return `<h2 class="stage-title">🏁 Quem passou da fase de grupos</h2>
+    <p class="muted hint" style="margin-top:-.3rem">Real (esq) × seu palpite (dir). ✅ acertou que o time passa.</p>
+    <div class="qc-grid">${groupRows}</div>
+    ${realT.length ? `<div class="card" style="margin-top:.5rem"><h3>🥉 Melhores 3ºs <span class="muted" style="font-size:.8rem">(8 de 12)</span></h3><div class="qc-thirds">${thirdsCompare}</div></div>` : ''}`;
+}
+
 // Jogos de um grupo com os placares atuais do rascunho (para a classificação ao vivo).
 function draftGroupGames(g) {
   return PoolState.data.matches
@@ -775,33 +843,57 @@ async function renderPalpites() {
     html += `<div class="lock-banner open">⏳ Palpites abertos. Fecham automaticamente em <b>${esc(fmtDate(new Date(lock.lockAt).toISOString()))}</b> (5 min antes do 1º jogo).</div>`;
   }
 
-  // ---- Nav lateral dos grupos (scroll horizontal) ----
-  html += `<div class="group-nav" id="group-nav">
+  const koOpen = !locks['r32'];
+
+  // ---- HTML da seção mata-mata (usada em ambas as ordens) ----
+  const buildKoHtml = () => {
+    let h = '';
+    for (const stage of ['r32', 'r16', 'qf', 'sf', 'third', 'final']) {
+      const list = matches.filter((m) => m.stage === stage);
+      if (!list.length) continue;
+      h += `<h2 class="stage-title">${esc(META.stageNames[stage] || stage)}</h2>`;
+      if (locks[stage]) {
+        h += `<div class="card locked-stage">🔒 Libera para palpites quando <b>${PREREQ_NAME[stage] || 'a fase anterior'}</b> terminar.</div>`;
+        continue;
+      }
+      let lastDay = '';
+      for (const m of list) {
+        const dk = dayKey(m.kickoff);
+        if (dk !== lastDay) { h += `<div class="daygroup">📅 ${esc(dk)}</div>`; lastDay = dk; }
+        h += matchRow(m);
+      }
+    }
+    return h;
+  };
+
+  // ---- HTML da seção fase de grupos ----
+  const groupNavHtml = `<div class="group-nav" id="group-nav">
     ${groupKeys.map((g) => `<button class="gchip" data-goto="group-${g}">${g}</button>`).join('')}
   </div>`;
+  const buildGroupHtml = () => {
+    let h = `<h2 class="stage-title">${esc(META.stageNames.group || 'Fase de Grupos')}</h2>
+      <p class="muted hint">Coloque os placares: a classificação de cada grupo se atualiza na hora. Os 2 primeiros + os 8 melhores 3ºs vão pro mata-mata. Vale <b>${PoolState.data.pool.scoring.pts_advance} pts</b> por seleção que você acertar.</p>
+      <div class="group-grid">`;
+    for (const g of groupKeys) {
+      const q = PoolState.qsaved[g];
+      const badge = q && q.points ? `<span class="pill pts">+${q.points}</span>` : '';
+      h += `<div class="card group-card" id="group-${g}">
+        <h3>Grupo ${g} ${badge}</h3>
+        <details class="group-stand"><summary>📊 Classificação ao vivo</summary>
+          <div class="stand-wrap" id="stand-${g}">${standHtml(g)}</div>
+        </details>
+        <div class="gmatches">
+          ${matches.filter((m) => m.stage === 'group' && m.group_label === g).map(matchRow).join('')}
+        </div>
+      </div>`;
+    }
+    h += `</div>`;
+    return h;
+  };
 
-  // ---- Fase de grupos: 12 cards com classificação ao vivo + jogos ----
-  html += `<h2 class="stage-title">${esc(META.stageNames.group || 'Fase de Grupos')}</h2>
-    <p class="muted hint">Coloque os placares: a classificação de cada grupo se atualiza na hora. Os 2 primeiros + os 8 melhores 3ºs vão pro mata-mata. Vale <b>${PoolState.data.pool.scoring.pts_advance} pts</b> por seleção que você acertar.</p>
-    <div class="group-grid">`;
-  for (const g of groupKeys) {
-    const q = PoolState.qsaved[g];
-    const badge = q && q.points ? `<span class="pill pts">+${q.points}</span>` : '';
-    html += `<div class="card group-card" id="group-${g}">
-      <h3>Grupo ${g} ${badge}</h3>
-      <details class="group-stand"><summary>📊 Classificação ao vivo</summary>
-        <div class="stand-wrap" id="stand-${g}">${standHtml(g)}</div>
-      </details>
-      <div class="gmatches">
-        ${matches.filter((m) => m.stage === 'group' && m.group_label === g).map(matchRow).join('')}
-      </div>
-    </div>`;
-  }
-  html += `</div>`;
-
-  // ---- Prévia dos classificados (1º, 2º e 3º) ----
-  const q1 = PoolState.qsaved; // tem points por grupo + __3__
-  html += `<h2 class="stage-title">🏁 Classificados (prévia dos seus palpites)</h2>
+  // ---- Prévia dos classificados (durante a fase de grupos) ----
+  const q1 = PoolState.qsaved;
+  const previewHtml = `<h2 class="stage-title">🏁 Classificados (prévia dos seus palpites)</h2>
     <div class="qual-cols">
       <div class="card">
         <h3>🥇 1º colocados</h3>
@@ -818,21 +910,21 @@ async function renderPalpites() {
       </div>
     </div>`;
 
-  // ---- Mata-mata (travado por fase) ----
-  for (const stage of ['r32', 'r16', 'qf', 'sf', 'third', 'final']) {
-    const list = matches.filter((m) => m.stage === stage);
-    if (!list.length) continue;
-    html += `<h2 class="stage-title">${esc(META.stageNames[stage] || stage)}</h2>`;
-    if (locks[stage]) {
-      html += `<div class="card locked-stage">🔒 Libera para palpites quando <b>${PREREQ_NAME[stage] || 'a fase anterior'}</b> terminar.</div>`;
-      continue;
-    }
-    let lastDay = '';
-    for (const m of list) {
-      const dk = dayKey(m.kickoff);
-      if (dk !== lastDay) { html += `<div class="daygroup">📅 ${esc(dk)}</div>`; lastDay = dk; }
-      html += matchRow(m);
-    }
+  if (koOpen) {
+    // Mata-mata aberto: palpites do mata-mata primeiro, depois comparativo, fase de grupos recolhida
+    html += buildKoHtml();
+    html += qualCompareHtml();
+    html += `<details class="group-done-details">
+      <summary class="group-done-sum">⚽ Fase de Grupos — encerrada <span class="muted">(expandir para ver jogos)</span></summary>
+      ${groupNavHtml}
+      ${buildGroupHtml()}
+    </details>`;
+  } else {
+    // Fase de grupos ativa: exibe normalmente
+    html += groupNavHtml;
+    html += buildGroupHtml();
+    html += previewHtml;
+    html += buildKoHtml();
   }
 
   if (!lock.locked) {
@@ -1732,20 +1824,22 @@ function renderPartidas() {
 // Lista de jogos agrupada por fase/grupo/dia (com cards expansíveis).
 function renderPartidasList(matches, content) {
   const stages = ['group', 'r32', 'r16', 'qf', 'sf', 'third', 'final'];
+  const allGroupsDone = !(PoolState.data.stageLocks || {})['r32'];
   let html = '';
   for (const stage of stages) {
     const list = matches.filter((m) => m.stage === stage);
     if (!list.length) continue;
-    html += `<div class="pstage"><h2 class="stage-title">${STAGE_ICON[stage] || ''} ${esc(META.stageNames[stage] || stage)}</h2>`;
+    const stageHead = `<h2 class="stage-title">${STAGE_ICON[stage] || ''} ${esc(META.stageNames[stage] || stage)}</h2>`;
+    let inner = '';
     if (stage === 'group') {
       for (const g of Object.keys(META.groups)) {
         const gl = list.filter((m) => m.group_label === g);
         if (!gl.length) continue;
-        html += `<div class="pmatch-block"><div class="pgroup-h">Grupo ${g}</div>${gl.map(partidaCard).join('')}</div>`;
+        inner += `<div class="pmatch-block"><div class="pgroup-h">Grupo ${g}</div>${gl.map(partidaCard).join('')}</div>`;
       }
     } else {
       let lastDay = '', block = '';
-      const flush = () => { if (block) { html += `<div class="pmatch-block">${block}</div>`; block = ''; } };
+      const flush = () => { if (block) { inner += `<div class="pmatch-block">${block}</div>`; block = ''; } };
       for (const m of list) {
         const dk = dayKey(m.kickoff);
         if (dk !== lastDay) { flush(); block = `<div class="pgroup-h">📅 ${esc(dk)}</div>`; lastDay = dk; }
@@ -1753,7 +1847,12 @@ function renderPartidasList(matches, content) {
       }
       flush();
     }
-    html += `</div>`;
+    if (stage === 'group' && allGroupsDone) {
+      // Grupos encerrados: recolhidos por padrão para destacar o mata-mata
+      html += `<details class="pstage pstage-done"><summary class="pstage-done-sum">${stageHead}<span class="muted" style="font-size:.8rem"> — encerrada (expandir)</span></summary><div>${inner}</div></details>`;
+    } else {
+      html += `<div class="pstage">${stageHead}${inner}</div>`;
+    }
   }
   content.innerHTML = html;
   content.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
