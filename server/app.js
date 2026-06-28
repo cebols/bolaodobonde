@@ -100,7 +100,9 @@ function publicPool(pool) {
 }
 
 // Trava GLOBAL dos palpites: por padrão ('auto') trava 5 min antes do 1º jogo do bolão.
-// O admin pode forçar 'open' (sempre liberado) ou 'locked' (sempre travado).
+// Libera automaticamente quando a fase de grupos termina: a partir daí, as fases do
+// mata-mata se regem pelo stageLocks (pré-requisito da fase anterior) e pela trava
+// individual de cada partida (lock_at_kickoff). Admin pode forçar 'open' ou 'locked'.
 const LOCK_LEAD_MS = 5 * 60 * 1000;
 // Janela de revelação dos palpites alheios (anti-trapaça): liberados a partir de
 // 2h antes do início de cada jogo (ou quando ele termina).
@@ -113,7 +115,13 @@ function lockInfo(pool, matches) {
   let locked;
   if (mode === 'locked') locked = true;
   else if (mode === 'open') locked = false;
-  else locked = lockAt != null && Date.now() >= lockAt;
+  else {
+    const groupMatches = matches.filter((m) => m.stage === 'group');
+    const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m) => m.finished);
+    // Trava apenas durante a fase de grupos (antes do kickAt). Quando os grupos encerram,
+    // libera globalmente: cada partida KO passa a usar sua própria trava por kickoff.
+    locked = !allGroupsDone && lockAt != null && Date.now() >= lockAt;
+  }
   return { mode, locked, lockAt, firstKickoff: first };
 }
 function matchPublic(m) {

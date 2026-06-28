@@ -839,7 +839,7 @@ async function renderPalpites() {
   let html = '';
   if (missing > 0 && !lock.locked) {
     html += `<div class="missing-hint card-slim">⚠️ Você tem <b>${missing}</b> jogo(s) abertos ainda sem palpite.</div>`;
-  } else if (!lock.locked && lock.lockAt) {
+  } else if (!lock.locked && lock.lockAt && lock.lockAt > Date.now()) {
     html += `<div class="lock-banner open">⏳ Palpites abertos. Fecham automaticamente em <b>${esc(fmtDate(new Date(lock.lockAt).toISOString()))}</b> (5 min antes do 1º jogo).</div>`;
   }
 
@@ -2086,13 +2086,13 @@ async function renderAdmin() {
 
     <div class="card">
       <h3>🔒 Trava de palpites</h3>
-      <p class="muted">Status: <b style="color:${lk.locked ? 'var(--danger)' : 'var(--green-bright)'}">${lk.locked ? 'TRAVADO 🔒' : 'ABERTO 🔓'}</b>${lk.lockAt ? ` · no automático, trava em <b>${esc(fmtDate(new Date(lk.lockAt).toISOString()))}</b> (5 min antes do 1º jogo)` : ''}.</p>
-      <div class="lock-state">
-        <button class="btn-soft ${lk.mode === 'auto' ? 'active' : ''}" data-lock="auto">⏱ Automático</button>
-        <button class="btn-soft ${lk.mode === 'open' ? 'active' : ''}" data-lock="open">🔓 Abrir agora</button>
-        <button class="btn-soft ${lk.mode === 'locked' ? 'active' : ''}" data-lock="locked">🔒 Travar agora</button>
+      <p class=”muted”>Status: <b style=”color:${lk.locked ? 'var(--danger)' : 'var(--green-bright)'}”>${lk.locked ? 'TRAVADO 🔒' : 'ABERTO 🔓'}</b>${lk.lockAt && lk.lockAt > Date.now() ? ` · no automático, fecha em <b>${esc(fmtDate(new Date(lk.lockAt).toISOString()))}</b>` : ''}.</p>
+      <div class=”lock-state”>
+        <button class=”btn-soft ${lk.mode === 'auto' ? 'active' : ''}” data-lock=”auto”>⏱ Automático</button>
+        <button class=”btn-soft ${lk.mode === 'open' ? 'active' : ''}” data-lock=”open”>🔓 Abrir agora</button>
+        <button class=”btn-soft ${lk.mode === 'locked' ? 'active' : ''}” data-lock=”locked”>🔒 Travar agora</button>
       </div>
-      <p class="muted">No modo <b>Automático</b>, abre até 5 min antes do primeiro jogo e trava sozinho. Use “Abrir” ou “Travar” para forçar quando quiser.</p>
+      <p class=”muted”>No modo <b>Automático</b>: fase de grupos trava 5 min antes do 1º jogo; fases do mata-mata abrem automaticamente quando a fase anterior encerra, e cada partida trava no horário do kickoff.</p>
     </div>
 
     <div class="card">
