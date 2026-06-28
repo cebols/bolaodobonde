@@ -429,6 +429,87 @@ function drawPoolShell() {
 // ---------- aba: palpites ----------
 const PREREQ_NAME = { r32: 'Fase de Grupos', r16: '16-avos', qf: 'Oitavas', sf: 'Quartas', third: 'Semifinais', final: 'Semifinais' };
 
+// Estrutura do chaveamento: ord → [ord_fonte_home, ord_fonte_away] (W seeds)
+// ord 102 (3º lugar) usa PERDEDORES das SFs, todos os outros usam vencedores.
+const BK_FEED = {
+  88:[73,76], 89:[72,74], 90:[75,77], 91:[78,79],
+  92:[82,83], 93:[80,81], 94:[85,87], 95:[84,86],
+  96:[88,89], 97:[92,93], 98:[90,91], 99:[94,95],
+  100:[96,97], 101:[98,99],
+  102:[100,101], 103:[100,101],
+};
+// Ordem de exibição do bracket por metade da chave
+const BK_HALVES = [
+  { sfOrd: 100, r32: [73,76,72,74,82,83,80,81], r16: [88,89,92,93], qf: [96,97] },
+  { sfOrd: 101, r32: [75,77,78,79,85,87,84,86], r16: [90,91,94,95], qf: [98,99] },
+];
+
+function resolveDraftKO() {
+  const matches = PoolState.data?.matches || [];
+  const byOrd = new Map(matches.map((m) => [m.ord, m]));
+  const R = {};
+  for (const m of [...matches].filter((m) => m.stage !== 'group').sort((a, b) => a.ord - b.ord)) {
+    let home = m.home_team || null, away = m.away_team || null;
+    const feed = BK_FEED[m.ord];
+    if (feed) {
+      const [sh, sa] = feed;
+      home = (m.ord === 102 ? R[sh]?.loser : R[sh]?.winner) ?? home;
+      away = (m.ord === 102 ? R[sa]?.loser : R[sa]?.winner) ?? away;
+    }
+    let winner = null, loser = null;
+    if (m.finished && m.home_score != null && m.away_score != null) {
+      const w = m.home_score > m.away_score ? 'home' : m.home_score < m.away_score ? 'away' : (m.advanced || null);
+      winner = w === 'home' ? home : w === 'away' ? away : null;
+      loser  = w === 'home' ? away  : w === 'away' ? home  : null;
+    } else {
+      const d = PoolState.draft[m.id] || {};
+      const dh = d.home != null && d.home !== '' ? +d.home : null;
+      const da = d.away != null && d.away !== '' ? +d.away : null;
+      if (dh != null && da != null && home && away) {
+        const w = dh > da ? 'home' : dh < da ? 'away' : (d.adv || null);
+        winner = w === 'home' ? home : w === 'away' ? away : null;
+        loser  = w === 'home' ? away  : w === 'away' ? home  : null;
+      }
+    }
+    R[m.ord] = { home, away, winner, loser };
+  }
+  return R;
+}
+
+function renderKOBracket() {
+  const R = resolveDraftKO();
+  const bkSlot = (name, win, lose) => {
+    if (!name) return `<div class="bk-slot bk-tbd">?</div>`;
+    const cls = win ? ' bk-win' : lose ? ' bk-loss' : '';
+    return `<div class="bk-slot${cls}">${flag(name)}<span>${esc(name)}</span></div>`;
+  };
+  const bkMatch = (ord) => {
+    const r = R[ord];
+    if (!r) return '<div class="bk-match bk-empty"></div>';
+    const { home, away, winner } = r;
+    const dec = !!winner;
+    return `<div class="bk-match${dec ? ' bk-dec' : ''}">
+      ${bkSlot(home, dec && winner === home, dec && winner !== home)}
+      ${bkSlot(away, dec && winner === away, dec && winner !== away)}
+    </div>`;
+  };
+  const col = (cls, label, ords) =>
+    `<div class="bk-col bk-${cls}"><div class="bk-lbl">${label}</div>${ords.map(bkMatch).join('')}</div>`;
+
+  return `<div class="ko-bracket">
+    ${BK_HALVES.map((h) => `<div class="bk-half">
+      ${col('r32','16 Avos', h.r32)}
+      ${col('r16','Oitavas', h.r16)}
+      ${col('qf', 'Quartas', h.qf)}
+      ${col('sf', 'Semis',  [h.sfOrd])}
+    </div>`).join('')}
+    <div class="bk-finals">
+      ${col('final','🏆 Final', [103])}
+      ${col('third','3º Lugar', [102])}
+    </div>
+  </div>`;
+}
+
 // Jogos reais de um grupo (usando placares finais, não o rascunho).
 function realGroupGames(g) {
   return (PoolState.data.matches || [])
@@ -913,6 +994,10 @@ async function renderPalpites() {
   if (koOpen) {
     // Mata-mata aberto: palpites do mata-mata primeiro, depois comparativo, fase de grupos recolhida
     html += buildKoHtml();
+    html += `<details class="bk-preview-wrap" open>
+      <summary class="bk-preview-sum">🏆 Prévia da chave (seus palpites)</summary>
+      <div id="ko-bracket-preview" class="bk-preview-body"></div>
+    </details>`;
     html += qualCompareHtml();
     html += `<details class="group-done-details">
       <summary class="group-done-sum">⚽ Fase de Grupos — encerrada <span class="muted">(expandir para ver jogos)</span></summary>
@@ -936,6 +1021,13 @@ async function renderPalpites() {
 
   view.innerHTML = html;
 
+  // Prévia da chave do mata-mata (atualizada nos inputs KO)
+  const refreshBracket = () => {
+    const el = view.querySelector('#ko-bracket-preview');
+    if (el) el.innerHTML = renderKOBracket();
+  };
+  refreshBracket();
+
   // nav dos grupos -> rola até o card
   view.querySelectorAll('.gchip').forEach((b) => {
     b.onclick = () => { const el = $('#' + b.dataset.goto); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
@@ -952,7 +1044,7 @@ async function renderPalpites() {
       PoolState.draft[id][side] = v === '' ? '' : Number(v);
       const m = matchById.get(Number(id));
       if (m && m.stage === 'group') refreshAll();
-      else if (m && m.stage !== 'group') toggleAdvPick(view, m.id); // mata-mata: revela "quem avança" quando empata
+      else if (m && m.stage !== 'group') { toggleAdvPick(view, m.id); refreshBracket(); }
       if (v !== '' && scoreInputs[idx + 1]) { scoreInputs[idx + 1].focus(); scoreInputs[idx + 1].select(); }
     };
     inp.onfocus = () => inp.select();
@@ -965,6 +1057,7 @@ async function renderPalpites() {
       PoolState.draft[id] = PoolState.draft[id] || {};
       PoolState.draft[id].adv = side;
       b.closest('.adv-opts').querySelectorAll('.adv-opt').forEach((x) => x.classList.toggle('sel', x === b));
+      refreshBracket();
     };
   });
 

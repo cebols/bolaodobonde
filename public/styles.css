@@ -730,3 +730,44 @@ tr.perf-exp > td { padding: 0; background: var(--bg2); border-bottom: 2px solid 
   .perf-row .pr-pick { grid-column: 1 / -1; text-align: left; }
   .perf-stat .pv { font-size: 1.15rem; }
 }
+
+/* ---------- prévia da chave (bracket ao vivo) ---------- */
+.bk-preview-wrap { border: 1px solid var(--line); border-radius: 10px; margin: 1rem 0; }
+.bk-preview-sum { padding: 0.6rem 0.9rem; cursor: pointer; font-weight: 600; list-style: none; }
+.bk-preview-sum::before { content: '▸ '; transition: display .15s; }
+.bk-preview-wrap[open] > .bk-preview-sum::before { content: '▾ '; }
+.bk-preview-body { overflow-x: auto; padding: 0.5rem 0.5rem 0.8rem; }
+
+.ko-bracket { display: flex; flex-direction: column; gap: 0; min-width: 420px; }
+.bk-half { display: flex; flex-direction: row; gap: 0; }
+.bk-finals { display: flex; flex-direction: row; gap: 0; justify-content: center; border-top: 1px solid var(--line); padding-top: 0.4rem; margin-top: 0.2rem; }
+
+/* coluna de cada fase */
+.bk-col { display: flex; flex-direction: column; flex: 0 0 auto; }
+.bk-r32 { width: 112px; }
+.bk-r16 { width: 112px; }
+.bk-qf  { width: 112px; }
+.bk-sf  { width: 112px; }
+.bk-final, .bk-third { width: 112px; }
+
+.bk-lbl { font-size: 0.62rem; font-weight: 700; color: var(--muted); text-align: center; text-transform: uppercase; letter-spacing: .04em; padding: 0.2rem 0; }
+
+/* cada confronto */
+.bk-match { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; margin: 2px 3px; background: var(--bg2); flex: 1; justify-content: center; min-height: 38px; }
+.bk-empty { flex: 1; }
+.bk-dec { border-color: var(--line); }
+
+/* slot de time */
+.bk-slot { display: flex; align-items: center; gap: 3px; padding: 2px 5px; font-size: 0.67rem; white-space: nowrap; overflow: hidden; }
+.bk-slot span { overflow: hidden; text-overflow: ellipsis; }
+.bk-slot img.flag { width: 14px; height: 10px; flex-shrink: 0; }
+.bk-tbd { color: var(--muted); font-style: italic; }
+.bk-win { background: rgba(74,222,128,.12); font-weight: 700; }
+.bk-loss { opacity: 0.4; }
+
+/* alinhamento vertical por fase: justify-content espaça conforme número de matches */
+.bk-r32 { justify-content: space-around; }
+.bk-r16 { justify-content: space-around; }
+.bk-qf  { justify-content: space-around; }
+.bk-sf  { justify-content: center; }
+.bk-final, .bk-third { justify-content: center; }
