@@ -525,9 +525,22 @@ export async function resolveKnockout(poolId) {
     if (assign) for (const [slot, g] of Object.entries(assign)) btTeam[slot] = groupRes[g].third;
   }
 
-  const decided = (m) => m && m.finished && m.home_score != null && m.away_score != null && m.home_score !== m.away_score;
-  const winnerOf = (m) => (decided(m) ? (m.home_score > m.away_score ? m.home_team : m.away_team) : null);
-  const loserOf = (m) => (decided(m) ? (m.home_score > m.away_score ? m.away_team : m.home_team) : null);
+  const winnerOf = (m) => {
+    if (!m || !m.finished || m.home_score == null || m.away_score == null) return null;
+    if (m.home_score > m.away_score) return m.home_team;
+    if (m.home_score < m.away_score) return m.away_team;
+    if (m.advanced === 'home') return m.home_team;
+    if (m.advanced === 'away') return m.away_team;
+    return null;
+  };
+  const loserOf = (m) => {
+    if (!m || !m.finished || m.home_score == null || m.away_score == null) return null;
+    if (m.home_score > m.away_score) return m.away_team;
+    if (m.home_score < m.away_score) return m.home_team;
+    if (m.advanced === 'home') return m.away_team;
+    if (m.advanced === 'away') return m.home_team;
+    return null;
+  };
   const resolveSeed = (seed) => {
     if (!seed) return null;
     if (/^1[A-L]$/.test(seed)) return groupRes[seed[1]]?.first || null;

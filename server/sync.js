@@ -236,7 +236,7 @@ export async function syncPool(pool, { force = false } = {}) {
   }
 
   if (touchedGroups.size) await recomputeAdvanceAll(pool.id);
-  if (updated) await resolveKnockout(pool.id); // preenche o chaveamento
+  await resolveKnockout(pool.id); // preenche o chaveamento (sempre, para aplicar correções de algoritmo)
   await run('UPDATE pools SET synced_at = $1 WHERE id = $2', [new Date().toISOString(), pool.id]);
   return { updated, redated };
 }

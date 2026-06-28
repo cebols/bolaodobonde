@@ -141,8 +141,8 @@ export const KO_SEEDS = {
 // Slots dos 8 "Melhores 3ºs": cada slot só aceita 3º dos grupos listados (Anexo C).
 // A chave bate com o "BTxx" usado em KO_SEEDS.
 export const BT_SLOTS = {
-  BT74: ['A', 'B', 'C', 'D', 'F'],
-  BT77: ['C', 'D', 'F', 'G', 'H'],
+  BT74: ['A', 'C', 'D', 'B', 'F'],  // D antes de B: alinha com tabela oficial FIFA Anexo C
+  BT77: ['C', 'F', 'D', 'G', 'H'],  // F antes de D: alinha com tabela oficial FIFA Anexo C
   BT79: ['C', 'E', 'F', 'H', 'I'],
   BT80: ['E', 'H', 'I', 'J', 'K'],
   BT81: ['B', 'E', 'F', 'I', 'J'],
