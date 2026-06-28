@@ -131,7 +131,7 @@ function matchPublic(m) {
     home_label: m.home_label, away_label: m.away_label, kickoff: m.kickoff,
     home_score: m.home_score, away_score: m.away_score, finished: !!m.finished,
     advanced: m.advanced || null, // mata-mata: 'home'|'away' (quem passou — usado em empate/pênaltis)
-    locked: !!m.finished || (new Date(m.kickoff).getTime() <= Date.now()),
+    locked: !!m.finished || (new Date(m.kickoff).getTime() - LOCK_LEAD_MS <= Date.now()),
   };
 }
 
@@ -230,7 +230,7 @@ app.put('/api/pools/:slug/predictions', wrap(async (req, res) => {
     const m = matchById.get(Number(p.matchId));
     if (!m || m.home_team == null || m.away_team == null) { skipped++; continue; }
     if (locks[m.stage]) { skipped++; continue; } // fase ainda não liberada
-    const locked = m.finished || (pool.lock_at_kickoff && new Date(m.kickoff).getTime() <= Date.now());
+    const locked = m.finished || (pool.lock_at_kickoff && new Date(m.kickoff).getTime() - LOCK_LEAD_MS <= Date.now());
     if (locked) { skipped++; continue; }
     const h = Math.max(0, Math.min(99, parseInt(p.home, 10)));
     const a = Math.max(0, Math.min(99, parseInt(p.away, 10)));
@@ -265,7 +265,7 @@ app.post('/api/pools/:slug/predictions/clear', wrap(async (req, res) => {
   if (lockInfo(pool, matchRows).locked) {
     return res.status(403).json({ error: 'Palpites travados pelo organizador.' });
   }
-  const isLocked = (m) => m.finished || (pool.lock_at_kickoff && new Date(m.kickoff).getTime() <= Date.now());
+  const isLocked = (m) => m.finished || (pool.lock_at_kickoff && new Date(m.kickoff).getTime() - LOCK_LEAD_MS <= Date.now());
   const ids = matchRows
     .filter((m) => !isLocked(m) && (!group || (m.stage === 'group' && m.group_label === group)))
     .map((m) => m.id);
