@@ -1995,7 +1995,7 @@ async function loadMatchPanel(card) {
       ${d.predictions.map((p, i) => `<div class="prow ${p.name === meName ? 'me' : ''}">
         <span class="prk">${hasResult && i === 0 && p.points > 0 ? '🥇' : (i + 1)}</span>
         <span class="pnm">${avatarImg(p.avatar, p.name, 'av xs')}<span>${esc(p.name)}${p.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span>
-        <span class="ppick">${p.home_score} x ${p.away_score}${p.adv_pick ? ` <small class="adv-mini">→ ${flag(p.adv_pick === 'home' ? d.match.home_team : d.match.away_team)}</small>` : ''}</span>
+        <span class="ppick">${p.hidden ? '<span class="muted">🔒 oculto</span>' : `${p.home_score} x ${p.away_score}${p.adv_pick ? ` <small class="adv-mini">→ ${flag(p.adv_pick === 'home' ? d.match.home_team : d.match.away_team)}</small>` : ''}`}</span>
         ${hasResult ? `<span class="pill ${p.points ? 'pts' : ''} ppts">${p.points}</span>` : '<span class="ppts muted">—</span>'}
       </div>`).join('')}
     </div>`;

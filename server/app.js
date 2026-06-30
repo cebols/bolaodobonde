@@ -107,6 +107,12 @@ const LOCK_LEAD_MS = 5 * 60 * 1000;
 // Janela de revelação dos palpites alheios (anti-trapaça): liberados a partir de
 // 2h antes do início de cada jogo (ou quando ele termina).
 const REVEAL_LEAD_MS = 2 * 60 * 60 * 1000;
+// Participantes cujo palpite só aparece quando o jogo COMEÇA (não 2h antes).
+// Comparação por nome, sem acento/maiúsculas.
+const HIDE_PICK_UNTIL_KICKOFF = new Set(['bruno']);
+const hiddenUntilKickoff = (name) => HIDE_PICK_UNTIL_KICKOFF.has(
+  String(name || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+);
 function lockInfo(pool, matches) {
   const kickoffs = matches.map((m) => new Date(m.kickoff).getTime()).filter((n) => !Number.isNaN(n));
   const first = kickoffs.length ? Math.min(...kickoffs) : null;
@@ -473,8 +479,9 @@ app.get('/api/pools/:slug/participants/:name', wrap(async (req, res) => {
     `SELECT pr.match_id, pr.home_score, pr.away_score, pr.points, pr.adv_pick, pr.adv_points, m.kickoff, m.finished
        FROM predictions pr JOIN matches m ON m.id = pr.match_id
       WHERE pr.participant_id = $1`, [p.id]);
+  const lead = hiddenUntilKickoff(p.name) ? 0 : REVEAL_LEAD_MS; // Bruno: só ao começar o jogo
   const predictions = rows
-    .filter((r) => r.finished || new Date(r.kickoff).getTime() - REVEAL_LEAD_MS <= now) // a partir de 2h antes
+    .filter((r) => r.finished || new Date(r.kickoff).getTime() - lead <= now)
     .map((r) => ({ match_id: r.match_id, home_score: r.home_score, away_score: r.away_score, points: r.points, adv_pick: r.adv_pick || null, adv_points: Number(r.adv_points || 0) }));
   const quals = await all('SELECT group_label, points FROM qualifiers WHERE participant_id = $1', [p.id]);
   const total = rows.reduce((s, r) => s + Number(r.points) + Number(r.adv_points || 0), 0) + quals.reduce((s, q) => s + Number(q.points), 0);
@@ -494,8 +501,21 @@ app.get('/api/pools/:slug/matches/:id/predictions', wrap(async (req, res) => {
        FROM predictions pr JOIN participants pa ON pa.id = pr.participant_id
       WHERE pr.match_id = $1 AND pa.pool_id = $2`, [m.id, pool.id]);
   const total = await get('SELECT COUNT(*) AS c FROM participants WHERE pool_id = $1', [pool.id]);
+  // Bruno: o palpite dele fica oculto até o jogo realmente começar (kickoff).
+  const kicked = !!m.finished || new Date(m.kickoff).getTime() <= Date.now();
   const predictions = rows
-    .map((r) => ({ name: r.name, avatar: r.avatar || null, home_score: r.home_score, away_score: r.away_score, points: Number(r.points) + Number(r.adv_points || 0), adv_pick: r.adv_pick || null, adv_points: Number(r.adv_points || 0) }))
+    .map((r) => {
+      const hide = !kicked && hiddenUntilKickoff(r.name);
+      return {
+        name: r.name, avatar: r.avatar || null,
+        home_score: hide ? null : r.home_score,
+        away_score: hide ? null : r.away_score,
+        points: hide ? 0 : Number(r.points) + Number(r.adv_points || 0),
+        adv_pick: hide ? null : (r.adv_pick || null),
+        adv_points: hide ? 0 : Number(r.adv_points || 0),
+        hidden: hide,
+      };
+    })
     .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
   // autores dos gols (ESPN) — só faz sentido quando o jogo começou
   let goals = [];
