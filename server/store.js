@@ -294,15 +294,21 @@ function scoreMatch(pool, pred, m) {
   if (m.home_score == null || m.away_score == null) return 0;
   const ph = pred.home_score, pa = pred.away_score;
   const rh = m.home_score, ra = m.away_score;
+  // Quando o admin digita o placar dos pênaltis (rh ≠ ra mas advanced está definido),
+  // o regulamento terminou empatado — só pts_outcome para quem acertou empate.
+  const penScoreStored = !!m.advanced && rh !== ra;
   let base;
-  if (ph === rh && pa === ra) base = pool.pts_exact;
-  else if (Math.sign(ph - pa) !== Math.sign(rh - ra)) base = 0;
-  // O bônus de saldo só vale em jogos com VENCEDOR. Todo empate tem saldo 0, então
-  // um empate não-exato vale só o acerto do resultado (senão qualquer empate pegaria o bônus).
-  else if (rh !== ra && ph - pa === rh - ra) base = pool.pts_goaldiff;
-  else base = pool.pts_outcome;
+  if (penScoreStored) {
+    base = (ph === pa) ? pool.pts_outcome : 0;
+  } else {
+    if (ph === rh && pa === ra) base = pool.pts_exact;
+    else if (Math.sign(ph - pa) !== Math.sign(rh - ra)) base = 0;
+    // O bônus de saldo só vale em jogos com VENCEDOR. Todo empate tem saldo 0.
+    else if (rh !== ra && ph - pa === rh - ra) base = pool.pts_goaldiff;
+    else base = pool.pts_outcome;
+  }
   if (!base) return 0;
-  return Math.round(base * phaseMult(pool, m.stage)); // mata-mata: × multiplicador da fase
+  return Math.round(base * phaseMult(pool, m.stage));
 }
 
 export async function recomputeMatch(matchId) {

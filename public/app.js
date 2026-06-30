@@ -2236,6 +2236,13 @@ async function renderAdmin() {
     </div>
 
     <div class="card">
+      <h3>🔁 Recomputar pontos</h3>
+      <p class="muted">Recalcula todos os pontos de todos os participantes com base nos resultados atuais. Use se corrigiu algum placar ou ajustou a fórmula de pontuação.</p>
+      <div class="spacer"></div>
+      <button id="btn-recompute" class="btn-soft">Recomputar todos os pontos</button>
+    </div>
+
+    <div class="card">
       <h3>📝 Resultados & chaveamento</h3>
       <p class="muted">Lance o placar real dos jogos. No mata-mata, defina os times de cada confronto. O ranking recalcula sozinho.</p>
       <div class="spacer"></div>
@@ -2292,6 +2299,18 @@ async function renderAdmin() {
       PoolState.data = await api('GET', `/api/pools/${PoolState.slug}`, null, { 'x-admin-token': adminToken });
       drawPoolShell();
     } catch (e) { toast(e.message, true); }
+  };
+
+  $('#btn-recompute').onclick = async () => {
+    const btn = $('#btn-recompute');
+    btn.disabled = true; btn.textContent = 'Recomputando…';
+    try {
+      const r = await api('POST', `/api/pools/${PoolState.slug}/recompute`, {}, { 'x-admin-token': adminToken });
+      toast(`✅ ${r.recomputed} partida(s) recomputada(s)!`);
+      PoolState.data = await api('GET', `/api/pools/${PoolState.slug}`, null, { 'x-admin-token': adminToken });
+      drawPoolShell();
+    } catch (e) { toast(e.message, true); }
+    finally { if ($('#btn-recompute')) { $('#btn-recompute').disabled = false; $('#btn-recompute').textContent = 'Recomputar todos os pontos'; } }
   };
 
   // fotos dos participantes

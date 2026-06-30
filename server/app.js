@@ -613,6 +613,15 @@ app.post('/api/pools/:slug/sync', wrap(async (req, res) => {
   res.json(r);
 }));
 
+// Recomputa todos os pontos de todas as partidas encerradas (admin).
+app.post('/api/pools/:slug/recompute', wrap(async (req, res) => {
+  const pool = await requireAdmin(req, res); if (!pool) return;
+  const finished = await all('SELECT id FROM matches WHERE pool_id = $1 AND finished = 1', [pool.id]);
+  for (const m of finished) await recomputeMatch(m.id);
+  await recomputeAdvanceAll(pool.id);
+  res.json({ ok: true, recomputed: finished.length });
+}));
+
 // ---------- static + SPA fallback ----------
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 app.use(express.static(PUBLIC_DIR));
