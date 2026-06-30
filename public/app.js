@@ -1468,7 +1468,7 @@ async function renderRanking() {
   const view = $('#tabview');
   view.innerHTML = `<div class="card center"><p>Carregando ranking…</p></div>`;
   try {
-    const [{ leaderboard }, hist] = await Promise.all([
+    const [{ leaderboard, advTotal }, hist] = await Promise.all([
       api('GET', `/api/pools/${PoolState.slug}/leaderboard`),
       api('GET', `/api/pools/${PoolState.slug}/history`).catch(() => ({ rounds: [] })),
     ]);
@@ -1493,13 +1493,13 @@ async function renderRanking() {
       <p class="muted tiebreak-note">Toque no <b>seu nome</b> pra ver seu desempenho jogo a jogo; em <b>outro nome</b> pra comparar. Empate em pontos desempata por mais placares exatos.</p>
       <div class="board-wrap"><table class="board"><thead><tr>
         <th class="num">#</th>${hasMoves ? '<th class="num" title="Variação na última rodada">↕</th>' : ''}<th>Participante</th>
-        <th class="num" title="Pontuação total (placar + avanço)">Pontos</th><th class="num" title="Seleções que acertou passando de fase (de 32)">x/32</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th>
+        <th class="num" title="Pontuação total (placar + avanço)">Pontos</th><th class="num" title="Classificados que você acertou (grupos + mata-mata) ÷ classificados conhecidos até agora">Classif.</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th>
       </tr></thead><tbody>
       ${leaderboard.map((r, i) => `<tr class="${r.name === meName ? 'me' : ''} board-row" data-name="${esc(r.name)}">
         <td class="rank ${i < 3 ? 'top' + (i + 1) : ''}">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</td>
         ${hasMoves ? `<td class="num">${moveBadge(deltaByName.get(r.name) ?? 0)}</td>` : ''}
         <td><span class="name-cell">${avatarImg(r.avatar, r.name, 'av rk')}<span class="nm">${esc(r.name)}${r.name === meName ? ' <span class="muted">(você)</span>' : ''}</span></span></td>
-        <td class="num"><b>${r.total}</b></td><td class="num">${r.grp_adv ?? '-'}/32</td>
+        <td class="num"><b>${r.total}</b></td><td class="num">${r.adv_hit ?? 0}/${advTotal ?? 0}</td>
         <td class="num">${aprov(r)}</td><td class="num">${r.exatos}</td>
       </tr>`).join('')}
       </tbody></table></div></div>`;
@@ -1603,7 +1603,7 @@ async function toggleOwnPerf(tr) {
   } catch (e) { exp.querySelector('td').innerHTML = `<div class="center" style="padding:.6rem">${esc(e.message)}</div>`; }
 }
 
-function buildPerfPanel(mine) {
+function buildPerfPanel(mine, { you = true } = {}) {
   const scoring = PoolState.data.pool.scoring;
   const matches = PoolState.data.matches || [];
   const preds = new Map(mine.predictions.map((p) => [p.match_id, p]));
@@ -1637,18 +1637,19 @@ function buildPerfPanel(mine) {
       </div>`;
     }).join('')}</div>`;
   } else {
-    html += `<p class="muted center">Nenhum jogo encerrado ainda — seu desempenho aparece aqui conforme a Copa rola.</p>`;
+    html += `<p class="muted center">Nenhum jogo encerrado ainda — o desempenho aparece aqui conforme a Copa rola.</p>`;
   }
-  html += `<div class="center" style="margin-top:.6rem"><button class="btn-soft btn-sm perf-share">📸 Compartilhar meu card</button></div></div>`;
+  html += `<div class="center" style="margin-top:.6rem"><button class="btn-soft btn-sm perf-share">📸 Compartilhar ${you ? 'meu card' : 'card de ' + esc(mine.name)}</button></div></div>`;
   return html;
 }
 
-// Modal de comparação: seus palpites vs. os de outro participante (só jogos já iniciados).
+// Modal do participante: breakdown de pontos jogo a jogo (placar + classificação)
+// e, se você estiver no bolão, o placar do confronto direto com você.
 async function openCompare(name) {
   const meName = PoolState.me?.name;
   const ov = document.createElement('div');
   ov.className = 'modal-ov';
-  ov.innerHTML = `<div class="modal cmp-modal"><p class="center muted">Carregando comparação…</p></div>`;
+  ov.innerHTML = `<div class="modal cmp-modal"><p class="center muted">Carregando…</p></div>`;
   document.body.appendChild(ov);
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
 
@@ -1657,42 +1658,24 @@ async function openCompare(name) {
     if (meName && meName !== name) reqs.push(api('GET', `/api/pools/${PoolState.slug}/participants/${encodeURIComponent(meName)}`));
     const [them, me] = await Promise.all(reqs);
 
-    const matchById = new Map((PoolState.data.matches || []).map((m) => [m.id, m]));
-    const theirs = new Map(them.predictions.map((p) => [p.match_id, p]));
-    const mine = me ? new Map(me.predictions.map((p) => [p.match_id, p])) : null;
-
-    // jogos a mostrar: união dos palpites já iniciados, ordenados por kickoff desc
-    const ids = new Set([...theirs.keys(), ...(mine ? mine.keys() : [])]);
-    const rows = [...ids]
-      .map((id) => matchById.get(id)).filter(Boolean)
-      .filter((m) => m.home_team && m.away_team)
-      .sort((a, b) => new Date(b.kickoff) - new Date(a.kickoff));
-
-    let myPts = 0, theirPts = 0;
-    const body = rows.map((m) => {
-      const tp = theirs.get(m.id), mp = mine ? mine.get(m.id) : null;
-      if (tp) theirPts += tp.points || 0;
-      if (mp) myPts += mp.points || 0;
-      const real = m.finished && m.home_score != null ? `${m.home_score}–${m.away_score}` : (m.home_score != null ? `${m.home_score}–${m.away_score}` : '—');
-      const pick = (p) => p ? `${p.home_score}–${p.away_score}${(m.finished && p.points != null) ? ` <span class="cmp-pts ${p.points ? 'pos' : ''}">+${p.points}</span>` : ''}` : '<span class="muted">—</span>';
-      return `<tr>
-        <td class="cmp-game">${flag(m.home_team)}<span class="cmp-x">×</span>${flag(m.away_team)}<div class="cmp-real">${esc(real)}</div></td>
-        ${mine ? `<td class="num">${pick(mp)}</td>` : ''}
-        <td class="num">${pick(tp)}</td>
-      </tr>`;
-    }).join('');
+    // Confronto direto: soma os pontos de placar nos jogos já encerrados de cada um.
+    let tally = '';
+    if (me) {
+      const myPts = me.predictions.reduce((s, p) => s + (p.points || 0), 0);
+      const theirPts = them.predictions.reduce((s, p) => s + (p.points || 0), 0);
+      tally = `<p class="cmp-tally"><b>${esc(meName)}</b> ${myPts} × ${theirPts} <b>${esc(name)}</b> ${myPts > theirPts ? '🟢' : myPts < theirPts ? '🔴' : '🤝'} <span class="muted">(pontos de placar)</span></p>`;
+    }
 
     ov.querySelector('.cmp-modal').innerHTML = `
       <div class="row" style="align-items:center;justify-content:space-between">
-        <h3 style="margin:0">⚔️ Comparação</h3>
+        <h3 style="margin:0">📋 ${esc(name)}</h3>
         <button class="btn-soft btn-sm" data-close>Fechar</button>
       </div>
-      ${mine ? `<p class="cmp-tally">Nos jogos já liberados: <b>${meName}</b> ${myPts} × ${theirPts} <b>${esc(name)}</b> ${myPts > theirPts ? '🟢' : myPts < theirPts ? '🔴' : '🤝'}</p>` : `<p class="muted">Entre no bolão para comparar com seus palpites.</p>`}
-      ${rows.length ? `<div class="board-wrap"><table class="board cmp-table"><thead><tr>
-        <th>Jogo / resultado</th>${mine ? `<th class="num">${esc(meName)}</th>` : ''}<th class="num">${esc(name)}</th>
-      </tr></thead><tbody>${body}</tbody></table></div>`
-        : `<p class="muted">Ainda não há jogos liberados para comparar (liberam 2h antes do início).</p>`}`;
+      ${tally}
+      ${buildPerfPanel(them, { you: false })}`;
     ov.querySelector('[data-close]').onclick = () => ov.remove();
+    const sb = ov.querySelector('.perf-share');
+    if (sb) sb.onclick = () => shareCard(PoolState._perfShare);
   } catch (e) {
     ov.querySelector('.cmp-modal').innerHTML = `<p class="center">${esc(e.message)}</p>
       <div class="center" style="margin-top:.6rem"><button class="btn-soft" data-close>Fechar</button></div>`;

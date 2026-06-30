@@ -315,17 +315,36 @@ app.get('/api/pools/:slug/leaderboard', wrap(async (req, res) => {
         + COALESCE((SELECT SUM(adv_points) FROM predictions WHERE participant_id = pa.id), 0) AS qual_pts,
       COALESCE((SELECT SUM(points) FROM qualifiers WHERE participant_id = pa.id) / NULLIF($2, 0), 0) AS grp_adv,
       (SELECT COUNT(*) FROM predictions pr JOIN matches m ON m.id = pr.match_id
+         WHERE pr.participant_id = pa.id AND m.finished = 1 AND m.stage <> 'group'
+           AND (CASE WHEN m.home_score > m.away_score THEN 'home' WHEN m.home_score < m.away_score THEN 'away' ELSE m.advanced END) IS NOT NULL
+           AND (CASE WHEN m.home_score > m.away_score THEN 'home' WHEN m.home_score < m.away_score THEN 'away' ELSE m.advanced END)
+             = (CASE WHEN pr.home_score > pr.away_score THEN 'home' WHEN pr.home_score < pr.away_score THEN 'away' ELSE pr.adv_pick END)) AS ko_adv,
+      (SELECT COUNT(*) FROM predictions pr JOIN matches m ON m.id = pr.match_id
          WHERE pr.participant_id = pa.id AND m.finished = 1
            AND pr.home_score = m.home_score AND pr.away_score = m.away_score) AS exatos
     FROM participants pa WHERE pa.pool_id = $1`, [pool.id, pool.pts_advance]);
+
+  // Total de "classificados" conhecidos até agora (denominador comum a todos):
+  // 32 dos grupos (2 por grupo encerrado + 8 melhores 3ºs quando todos terminam)
+  // + 1 por jogo de mata-mata já encerrado (cada confronto define 1 que avança).
+  const grpRows = await all("SELECT group_label, finished FROM matches WHERE pool_id = $1 AND stage = 'group'", [pool.id]);
+  const byGroup = {};
+  for (const m of grpRows) (byGroup[m.group_label] = byGroup[m.group_label] || []).push(!!m.finished);
+  const groupKeys = Object.keys(byGroup);
+  const finishedGroups = groupKeys.filter((g) => byGroup[g].length && byGroup[g].every(Boolean)).length;
+  const allGroupsDone = groupKeys.length > 0 && finishedGroups === groupKeys.length;
+  const koDone = await get("SELECT COUNT(*) AS c FROM matches WHERE pool_id = $1 AND stage <> 'group' AND finished = 1", [pool.id]);
+  const advTotal = (2 * finishedGroups) + (allGroupsDone ? 8 : 0) + Number(koDone?.c || 0);
+
   const board = rows.map((r) => ({
     name: r.name, avatar: r.avatar || null,
     total: Number(r.match_pts) + Number(r.qual_pts),
     match_pts: Number(r.match_pts), qual_pts: Number(r.qual_pts),
     grp_adv: Math.round(Number(r.grp_adv || 0)),
+    adv_hit: Math.round(Number(r.grp_adv || 0)) + Number(r.ko_adv || 0),
     exatos: Number(r.exatos),
   })).sort((a, b) => b.total - a.total || b.exatos - a.exatos || a.name.localeCompare(b.name));
-  res.json({ leaderboard: board });
+  res.json({ leaderboard: board, advTotal });
 }));
 
 // ---------- chat (2 canais por faixa do ranking) ----------
@@ -459,7 +478,7 @@ app.get('/api/pools/:slug/participants/:name', wrap(async (req, res) => {
     .map((r) => ({ match_id: r.match_id, home_score: r.home_score, away_score: r.away_score, points: r.points, adv_pick: r.adv_pick || null, adv_points: Number(r.adv_points || 0) }));
   const quals = await all('SELECT group_label, points FROM qualifiers WHERE participant_id = $1', [p.id]);
   const total = rows.reduce((s, r) => s + Number(r.points) + Number(r.adv_points || 0), 0) + quals.reduce((s, q) => s + Number(q.points), 0);
-  res.json({ name: p.name, predictions, total });
+  res.json({ name: p.name, predictions, qualifiers: quals, total });
 }));
 
 // Palpites de TODOS os participantes para UMA partida — revelados só quando o
