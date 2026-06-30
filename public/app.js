@@ -1892,6 +1892,13 @@ function renderPartidasList(matches, content) {
   }
   content.innerHTML = html;
   content.querySelectorAll('.pcard-head').forEach((h) => { h.onclick = () => togglePartida(h.closest('.pcard')); });
+
+  // Jogos de hoje já vêm abertos (palpites/visualização à mostra, sem precisar tocar).
+  const todayStr = localDay(new Date());
+  const todayIds = new Set(matches.filter((m) => localDay(m.kickoff) === todayStr).map((m) => String(m.id)));
+  content.querySelectorAll('.pcard').forEach((card) => {
+    if (todayIds.has(card.dataset.matchId) && !card.classList.contains('open')) togglePartida(card);
+  });
 }
 
 // Calendário mensal: grade dom–sáb com os dias que têm jogos; o dia selecionado
