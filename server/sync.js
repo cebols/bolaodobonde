@@ -229,8 +229,7 @@ export async function syncPool(pool, { force = false } = {}) {
     const fin = primary.finished ? 1 : 0;
     const isKO = m.stage && KO_STAGES.includes(m.stage);
 
-    // Disputa de pênaltis: o placar do JOGO é sempre o tempo regulamentar (um empate);
-    // os pênaltis só definem quem avança — nunca viram o placar da partida.
+    // Quem venceu a eventual disputa de pênaltis (de qualquer fonte disponível).
     const fdPen = fd.score?.penalties;
     const penWinner = (() => {
       const sh = espnSc?.sh;
@@ -240,22 +239,36 @@ export async function syncPool(pool, { force = false } = {}) {
       }
       return null;
     })();
-    const wentToPens = !!(fin && isKO && penWinner);
+    // O jogo foi decidido nos pênaltis? Detecta por qualquer sinal: placar de pênaltis,
+    // duração da partida, ou o admin já ter marcado quem avançou (empate decidido nos pênaltis).
+    const penShootout = !!(isKO && fin && (
+      penWinner != null ||
+      fd.score?.duration === 'PENALTY_SHOOTOUT' ||
+      m.advanced
+    ));
 
+    // O placar do JOGO é SEMPRE o tempo regulamentar (um empate, quando há pênaltis).
+    // Os pênaltis só definem quem avança e NUNCA viram o placar da partida.
     let sc, detectedAdv = m.advanced || null;
-    if (wentToPens) {
-      // Um jogo decidido nos pênaltis terminou EMPATADO no tempo normal/prorrogação.
-      // Pega a fonte que reporta o empate (a outra pode estar "poluída" com os pênaltis).
+    if (penShootout) {
+      detectedAdv = penWinner || m.advanced || null;
+      // 1) usa a fonte que reporta o empate; 2) preserva o empate já gravado (admin);
+      // 3) se não há empate confiável, NÃO sobrescreve o placar (evita gravar os pênaltis).
       const drawCand = [espnSc, fdSc].find((s) => s && s.h === s.a);
-      sc = drawCand || primary;
-      detectedAdv = penWinner;
+      if (drawCand) sc = { h: drawCand.h, a: drawCand.a };
+      else if (m.home_score != null && m.home_score === m.away_score) sc = { h: m.home_score, a: m.away_score };
+      else sc = null;
     } else {
-      sc = primary;
+      sc = { h: primary.h, a: primary.a };
     }
-    const scoreUnchanged = m.home_score === sc.h && m.away_score === sc.a && (m.finished ? 1 : 0) === fin;
-    if (scoreUnchanged && (m.advanced || null) === detectedAdv) continue;
+
+    const newH = sc ? sc.h : m.home_score;
+    const newA = sc ? sc.a : m.away_score;
+    const unchanged = m.home_score === newH && m.away_score === newA
+      && (m.finished ? 1 : 0) === fin && (m.advanced || null) === detectedAdv;
+    if (unchanged) continue;
     await run('UPDATE matches SET home_score = $1, away_score = $2, finished = $3, advanced = $4 WHERE id = $5',
-      [sc.h, sc.a, fin, detectedAdv, m.id]);
+      [newH, newA, fin, detectedAdv, m.id]);
     await recomputeMatch(m.id);
     if (m.group_label) touchedGroups.add(m.group_label);
     updated++;
