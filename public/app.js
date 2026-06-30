@@ -1490,7 +1490,7 @@ async function renderRanking() {
     const aprov = (r) => maxSoFar ? Math.round((r.match_pts / maxSoFar) * 100) + '%' : '—';
 
     const table = `<div class="card"><h3>📊 Classificação</h3>
-      <p class="muted tiebreak-note">Toque no <b>seu nome</b> pra ver seu desempenho jogo a jogo; em <b>outro nome</b> pra comparar. Empate em pontos desempata por mais placares exatos.</p>
+      <p class="muted tiebreak-note">Toque em <b>qualquer nome</b> pra ver o desempenho jogo a jogo (pontos por partida e classificação). Empate em pontos desempata por mais placares exatos.</p>
       <div class="board-wrap"><table class="board"><thead><tr>
         <th class="num">#</th>${hasMoves ? '<th class="num" title="Variação na última rodada">↕</th>' : ''}<th>Participante</th>
         <th class="num" title="Pontuação total (placar + avanço)">Pontos</th><th class="num" title="Classificados que você acertou (grupos + mata-mata) ÷ classificados conhecidos até agora">Classif.</th><th class="num" title="Pontos conquistados ÷ máximo possível nos jogos encerrados">Aproveit.</th><th class="num">Exatos</th>
@@ -1508,10 +1508,7 @@ async function renderRanking() {
       + raceChartHtml(rounds, leaderboard, meName) + tiebreakHtml();
 
     view.querySelectorAll('.board-row').forEach((tr) => {
-      tr.onclick = () => {
-        if (PoolState.me && tr.dataset.name === PoolState.me.name) toggleOwnPerf(tr);
-        else openCompare(tr.dataset.name);
-      };
+      tr.onclick = () => togglePerf(tr, tr.dataset.name);
     });
     // dispara a animação do pódio no próximo frame
     requestAnimationFrame(() => view.querySelectorAll('.pod-col').forEach((c) => c.classList.add('rise')));
@@ -1583,21 +1580,24 @@ function tiebreakHtml() {
   </div>`;
 }
 
-// Clicar no seu próprio nome no ranking expande seu desempenho ali mesmo
-// (substitui a antiga aba Desempenho).
-async function toggleOwnPerf(tr) {
+// Clicar em qualquer nome no ranking expande o desempenho daquele participante
+// ali mesmo (jogo a jogo, com pontos por partida e classificação).
+async function togglePerf(tr, name) {
   const nxt = tr.nextElementSibling;
   if (nxt && nxt.classList.contains('perf-exp')) { nxt.remove(); tr.classList.remove('exp-open'); return; }
   tr.parentElement.querySelectorAll('.perf-exp').forEach((e) => e.remove());
   tr.parentElement.querySelectorAll('.exp-open').forEach((e) => e.classList.remove('exp-open'));
   tr.classList.add('exp-open');
+  const isMe = !!(PoolState.me && name === PoolState.me.name);
   const exp = document.createElement('tr');
   exp.className = 'perf-exp';
-  exp.innerHTML = `<td colspan="${tr.children.length}"><div class="perf-inline center muted">Carregando seu desempenho…</div></td>`;
+  exp.innerHTML = `<td colspan="${tr.children.length}"><div class="perf-inline center muted">Carregando desempenho…</div></td>`;
   tr.after(exp);
   try {
-    const mine = await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token });
-    exp.querySelector('td').innerHTML = buildPerfPanel(mine);
+    const data = isMe
+      ? await api('GET', `/api/pools/${PoolState.slug}/me`, null, { 'x-participant-token': PoolState.me.token })
+      : await api('GET', `/api/pools/${PoolState.slug}/participants/${encodeURIComponent(name)}`);
+    exp.querySelector('td').innerHTML = buildPerfPanel(data, { you: isMe });
     const sb = exp.querySelector('.perf-share');
     if (sb) sb.onclick = () => shareCard(PoolState._perfShare);
   } catch (e) { exp.querySelector('td').innerHTML = `<div class="center" style="padding:.6rem">${esc(e.message)}</div>`; }
@@ -1641,46 +1641,6 @@ function buildPerfPanel(mine, { you = true } = {}) {
   }
   html += `<div class="center" style="margin-top:.6rem"><button class="btn-soft btn-sm perf-share">📸 Compartilhar ${you ? 'meu card' : 'card de ' + esc(mine.name)}</button></div></div>`;
   return html;
-}
-
-// Modal do participante: breakdown de pontos jogo a jogo (placar + classificação)
-// e, se você estiver no bolão, o placar do confronto direto com você.
-async function openCompare(name) {
-  const meName = PoolState.me?.name;
-  const ov = document.createElement('div');
-  ov.className = 'modal-ov';
-  ov.innerHTML = `<div class="modal cmp-modal"><p class="center muted">Carregando…</p></div>`;
-  document.body.appendChild(ov);
-  ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
-
-  try {
-    const reqs = [api('GET', `/api/pools/${PoolState.slug}/participants/${encodeURIComponent(name)}`)];
-    if (meName && meName !== name) reqs.push(api('GET', `/api/pools/${PoolState.slug}/participants/${encodeURIComponent(meName)}`));
-    const [them, me] = await Promise.all(reqs);
-
-    // Confronto direto: soma os pontos de placar nos jogos já encerrados de cada um.
-    let tally = '';
-    if (me) {
-      const myPts = me.predictions.reduce((s, p) => s + (p.points || 0), 0);
-      const theirPts = them.predictions.reduce((s, p) => s + (p.points || 0), 0);
-      tally = `<p class="cmp-tally"><b>${esc(meName)}</b> ${myPts} × ${theirPts} <b>${esc(name)}</b> ${myPts > theirPts ? '🟢' : myPts < theirPts ? '🔴' : '🤝'} <span class="muted">(pontos de placar)</span></p>`;
-    }
-
-    ov.querySelector('.cmp-modal').innerHTML = `
-      <div class="row" style="align-items:center;justify-content:space-between">
-        <h3 style="margin:0">📋 ${esc(name)}</h3>
-        <button class="btn-soft btn-sm" data-close>Fechar</button>
-      </div>
-      ${tally}
-      ${buildPerfPanel(them, { you: false })}`;
-    ov.querySelector('[data-close]').onclick = () => ov.remove();
-    const sb = ov.querySelector('.perf-share');
-    if (sb) sb.onclick = () => shareCard(PoolState._perfShare);
-  } catch (e) {
-    ov.querySelector('.cmp-modal').innerHTML = `<p class="center">${esc(e.message)}</p>
-      <div class="center" style="margin-top:.6rem"><button class="btn-soft" data-close>Fechar</button></div>`;
-    ov.querySelector('[data-close]').onclick = () => ov.remove();
-  }
 }
 
 // Multiplicador da fase no cliente (espelha o servidor; grupos = 1).
