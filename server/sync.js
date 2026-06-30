@@ -95,6 +95,9 @@ function parseEspn(json) {
     const state = ev.status?.type?.state || comp.status?.type?.state || 'pre'; // pre | in | post
     const hs = home.score != null && home.score !== '' ? parseInt(home.score, 10) : null;
     const as = away.score != null && away.score !== '' ? parseInt(away.score, 10) : null;
+    // Placar da disputa de pênaltis (separado do placar do jogo). Só decide quem avança.
+    const hsh = home.shootoutScore != null && home.shootoutScore !== '' ? parseInt(home.shootoutScore, 10) : null;
+    const ash = away.shootoutScore != null && away.shootoutScore !== '' ? parseInt(away.shootoutScore, 10) : null;
     // gols (scoring plays): jogador, minuto, pênalti, gol contra, lado
     const goals = [];
     for (const d of (comp.details || [])) {
@@ -103,7 +106,7 @@ function parseEspn(json) {
       const side = d.team && String(d.team.id) === String(home.team?.id) ? 'home' : 'away';
       goals.push({ side, who, minute: (d.clock && d.clock.displayValue) || '', pen: !!d.penaltyKick, og: !!d.ownGoal });
     }
-    out.push({ home: hp, away: ap, hs, as, state, completed: !!(ev.status?.type?.completed), goals });
+    out.push({ home: hp, away: ap, hs, as, hsh, ash, state, completed: !!(ev.status?.type?.completed), goals });
   }
   return out;
 }
@@ -153,12 +156,16 @@ export async function matchGoals(m) {
 }
 
 // Placar de um jogo do bolão a partir da ESPN (orienta home/away pelos times do jogo).
+// `sh` = placar dos pênaltis (orientado igual ao jogo), ou null se não houve disputa.
 function scoreFromEspn(m, list) {
   if (!m.home_team || !m.away_team) return null;
   for (const e of list) {
     if (e.state === 'pre' || e.hs == null || e.as == null) continue; // ainda não começou
-    if (e.home === m.home_team && e.away === m.away_team) return { h: e.hs, a: e.as, finished: e.completed };
-    if (e.home === m.away_team && e.away === m.home_team) return { h: e.as, a: e.hs, finished: e.completed };
+    const sh = (e.hsh != null && e.ash != null) ? { h: e.hsh, a: e.ash } : null;
+    if (e.home === m.home_team && e.away === m.away_team) return { h: e.hs, a: e.as, finished: e.completed, sh };
+    if (e.home === m.away_team && e.away === m.home_team) {
+      return { h: e.as, a: e.hs, finished: e.completed, sh: sh ? { h: sh.a, a: sh.h } : null };
+    }
   }
   return null;
 }
@@ -215,16 +222,35 @@ export async function syncPool(pool, { force = false } = {}) {
       }
     }
     // Placar: ESPN primeiro (mais rápido), football-data como fallback.
-    const sc = scoreFromEspn(m, espn) || scoreOf(fd);
-    if (!sc) continue;
-    const fin = sc.finished ? 1 : 0;
-    // Auto-detecta quem avançou em empates do mata-mata via placar de pênaltis (football-data).
-    let detectedAdv = m.advanced || null;
-    if (fin && sc.h === sc.a && m.stage && KO_STAGES.includes(m.stage)) {
-      const pen = fd.score?.penalties;
-      if (pen && pen.home != null && pen.away != null && pen.home !== pen.away) {
-        detectedAdv = pen.home > pen.away ? 'home' : 'away';
+    const espnSc = scoreFromEspn(m, espn);
+    const fdSc = scoreOf(fd);
+    const primary = espnSc || fdSc;
+    if (!primary) continue;
+    const fin = primary.finished ? 1 : 0;
+    const isKO = m.stage && KO_STAGES.includes(m.stage);
+
+    // Disputa de pênaltis: o placar do JOGO é sempre o tempo regulamentar (um empate);
+    // os pênaltis só definem quem avança — nunca viram o placar da partida.
+    const fdPen = fd.score?.penalties;
+    const penWinner = (() => {
+      const sh = espnSc?.sh;
+      if (sh && sh.h !== sh.a) return sh.h > sh.a ? 'home' : 'away';
+      if (fdPen && fdPen.home != null && fdPen.away != null && fdPen.home !== fdPen.away) {
+        return fdPen.home > fdPen.away ? 'home' : 'away';
       }
+      return null;
+    })();
+    const wentToPens = !!(fin && isKO && penWinner);
+
+    let sc, detectedAdv = m.advanced || null;
+    if (wentToPens) {
+      // Um jogo decidido nos pênaltis terminou EMPATADO no tempo normal/prorrogação.
+      // Pega a fonte que reporta o empate (a outra pode estar "poluída" com os pênaltis).
+      const drawCand = [espnSc, fdSc].find((s) => s && s.h === s.a);
+      sc = drawCand || primary;
+      detectedAdv = penWinner;
+    } else {
+      sc = primary;
     }
     const scoreUnchanged = m.home_score === sc.h && m.away_score === sc.a && (m.finished ? 1 : 0) === fin;
     if (scoreUnchanged && (m.advanced || null) === detectedAdv) continue;
