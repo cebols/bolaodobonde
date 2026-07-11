@@ -664,7 +664,12 @@ function refreshAll() {
 // Jogos rolando agora (já começaram e não terminaram) com placar e seu palpite.
 function liveMatchesNow() {
   const now = Date.now();
-  return (PoolState.data.matches || []).filter((m) => m.home_team && m.away_team && !m.finished && new Date(m.kickoff).getTime() <= now);
+  const MAX_MS = 4 * 60 * 60 * 1000; // 4h: 90min + acréscimos + prorrogação + pênaltis + buffer
+  return (PoolState.data.matches || []).filter((m) => {
+    if (!m.home_team || !m.away_team || m.finished) return false;
+    const ko = new Date(m.kickoff).getTime();
+    return ko <= now && now - ko < MAX_MS;
+  });
 }
 function liveBannerHtml() {
   const live = liveMatchesNow();
